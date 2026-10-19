@@ -3,6 +3,7 @@ import argparse
 from pathlib import Path
 
 from rich.traceback import install
+from rich.panel import Panel
 from rich_argparse import RichHelpFormatter
 
 install(show_locals=True)
@@ -52,10 +53,30 @@ def build_parser() -> RichArgumentParser:
         default=None,
         help="Name of the output file without suffix",
     )
+    # parser.add_argument(
+    #     "--mode",
+    #     type=Mode,
+    #     choices=list(Mode),
+    #     default=Mode.RESUME,
+    #     help=(
+    #         "reset: start fresh in GUI; "
+    #         "resume: load previous state in GUI; "
+    #         "silent: apply state without opening GUI"
+    #     ),
+    # )
 
 
 def main() -> int:
     parser = build_parser()
+
+    console.print(
+        Panel(
+            "[bold cyan]Flowtier[/bold cyan]\n"
+            "Filament segmentation interface",
+            border_style="cyan",
+            expand=False,
+        )
+    )
 
     return 0
 
