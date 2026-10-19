@@ -1,0 +1,18 @@
+{
+    "version": "1.0.0",
+    "configurations": [
+        {
+            "name": "Debug Flowtier",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/flowtier/cli.py",
+            "console": "integratedTerminal",
+            "args": [
+                "${workspaceFolder}/test/input/smoothed_interface.ply",
+                "--center_lines_path", "${workspaceFolder}/test/input/filament_center_lines.npz",
+                "-o", "${workspaceFolder}/test/output/",
+                "--name", "segmented_doi_voxelisation",
+            ]
+        }
+    ]
+}
