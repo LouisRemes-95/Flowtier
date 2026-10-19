@@ -9,9 +9,9 @@
             "console": "integratedTerminal",
             "args": [
                 "${workspaceFolder}/test/input/smoothed_interface.ply",
-                "--center_lines_path", "${workspaceFolder}/test/input/filament_center_lines.npz",
+                "-clp", "${workspaceFolder}/test/input/filament_center_lines.npz",
                 "-o", "${workspaceFolder}/test/output/",
-                "--name", "segmented_doi_voxelisation",
+                "-n", "segmented_doi_voxelisation",
             ]
         }
     ]
