@@ -9,7 +9,7 @@ from rich_argparse import RichHelpFormatter
 install(show_locals=True)
 
 from flowtier.common import UserError, console
-from flowtier.studio import Mode, AppConfig, run_flowtier_studio
+from flowtier.studio import Mode, AppConfig, AlgConfig, run_flowtier_studio
 
 
 class RichArgumentParser(argparse.ArgumentParser):
@@ -66,6 +66,12 @@ def build_parser() -> RichArgumentParser:
             "silent: apply state without opening GUI"
         ),
     )
+    parser.add_argument(
+        "--precision",
+        type=float,
+        default=1,
+        help="Voxel grid precision in mm",
+    )
 
     return parser
 
@@ -111,8 +117,9 @@ def main() -> int:
         surface_path, center_lines_path = resolve_inputs(args.surface_path, args.center_lines_path)
         output_path = resolve_output(surface_path, args.output_dir, args.name)
         app_config = AppConfig(surface_path, center_lines_path, output_path, args.mode)
+        alg_config = AlgConfig(args.precision)
 
-        return run_flowtier_studio(app_config)
+        return run_flowtier_studio(app_config, alg_config)
 
     
     except UserError as e:
