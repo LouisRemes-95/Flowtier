@@ -12,7 +12,7 @@ class DomainData:
             raise UserError("precision must be positive.")
         self.precision = precision
         self.boundaries = self.read_ply_bounds(surface_path)
-        self.build_void_distance_field(surface_path)
+        self.build_void_distance_field(surface_path, subdivisions = 2)
 
         return
 
@@ -29,14 +29,17 @@ class DomainData:
 
         return None
     
-    def build_void_distance_field(self, surface_path: Path, chunk_size: int = 100_000,) -> None:
+    def build_void_distance_field(self, surface_path: Path, chunk_size: int = 100_000, subdivisions: int = 0) -> None:
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive.")
+
+        vertices, faces = igl.read_triangle_mesh(surface_path)
+
+        vertices, faces = igl.loop(vertices, faces, subdivisions)
 
         return
 
         # Load triangular surface mesh
-        vertices, faces = igl.read_triangle_mesh(str(surface_path))
 
         # Define regular grid
         origin = vertices.min(axis=0)
