@@ -1,10 +1,9 @@
-from pathlib import Path
-from enum import Enum
 from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
 
 from flowtier.common import console
 from flowtier.data_handling import DomainData
-
 
 
 class Mode(str, Enum):
@@ -29,6 +28,8 @@ class AppConfig:
 
 def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
     with console.status("Building domain data..."):
-        domain_data = DomainData(app_config.surface_path, app_config.center_lines_path, alg_config.precision)
-        
+        domain_data = DomainData(
+            app_config.surface_path, app_config.center_lines_path, alg_config.precision
+        )
+
     console.print("[green]✔ Domain data build[/green]")

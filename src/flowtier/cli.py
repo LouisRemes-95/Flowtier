@@ -1,19 +1,21 @@
-import sys
 import argparse
+import sys
 from pathlib import Path
+from typing import NoReturn, override
 
-from rich.traceback import install
 from rich.panel import Panel
+from rich.traceback import install
 from rich_argparse import RichHelpFormatter
 
 install(show_locals=True)
 
 from flowtier.common import UserError, console
-from flowtier.studio import Mode, AppConfig, AlgConfig, run_flowtier_studio
+from flowtier.studio import AlgConfig, AppConfig, Mode, run_flowtier_studio
 
 
 class RichArgumentParser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
+    @override
+    def error(self, message: str) -> NoReturn:
         console.print(f"[bold red]✖ Argument error:[/bold red] {message}\n")
         self.print_help()
         raise SystemExit(2)
@@ -80,7 +82,7 @@ def resolve_inputs(surface_path: Path, center_lines_path: Path) -> tuple[Path, P
     surface_path = surface_path.resolve()
     if not surface_path.exists() or not surface_path.is_file():
         raise UserError("surface-path must be an existing file")
-    
+
     center_lines_path = center_lines_path.resolve()
     if not center_lines_path.exists() or not center_lines_path.is_file():
         raise UserError("center-lines-path must be an existing file")
@@ -104,8 +106,7 @@ def main() -> int:
 
     console.print(
         Panel(
-            "[bold cyan]Flowtier[/bold cyan]\n"
-            "Filament segmentation interface",
+            "[bold cyan]Flowtier[/bold cyan]\nFilament segmentation interface",
             border_style="cyan",
             expand=False,
         )
@@ -114,14 +115,15 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        surface_path, center_lines_path = resolve_inputs(args.surface_path, args.center_lines_path)
+        surface_path, center_lines_path = resolve_inputs(
+            args.surface_path, args.center_lines_path
+        )
         output_path = resolve_output(surface_path, args.output_dir, args.name)
         app_config = AppConfig(surface_path, center_lines_path, output_path, args.mode)
         alg_config = AlgConfig(args.precision)
 
         return run_flowtier_studio(app_config, alg_config)
 
-    
     except UserError as e:
         console.print(f"[bold red]✖ Error:[/bold red] {e}")
         raise SystemExit(1)
