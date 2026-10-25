@@ -23,9 +23,6 @@ requires-dist = [
     { name = "trimesh", specifier = ">=5.1.1" },
 ]
 
-[package.metadata.requires-dev]
-dev = []
-
 [[package]]
 name = "libigl"
 version = "2.6.3"

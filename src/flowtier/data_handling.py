@@ -10,15 +10,17 @@ class DomainData:
     def __init__(
         self, surface_path: Path, center_lines_path: Path, precision: float
     ) -> None:
+
         if precision <= 0:
             raise UserError("precision must be positive.")
         self.precision = precision
-        self.boundaries = self.read_ply_bounds(surface_path)
+
+        self.set_boundaries(surface_path)
         self.build_void_distance_field(surface_path, subdivisions=2)
 
     @staticmethod
-    def read_ply_bounds(path: Path) -> np.ndarray | None:
-        with path.open("rb") as file:
+    def read_ply_bounds(surface_path: Path) -> np.ndarray | None:
+        with surface_path.open("rb") as file:
             for line in file:
                 if line.startswith(b"comment domain boundaries "):
                     bounds = np.fromstring(
@@ -32,6 +34,15 @@ class DomainData:
 
         return None
 
+    def set_boundaries(self, surface_path: Path) -> None:
+        boundaries = self.read_ply_bounds(surface_path)
+
+        if boundaries is None:
+            vertices, _ = igl.read_triangle_mesh(surface_path)
+            boundaries = np.array([vertices.min(axis=0), vertices.max(axis=0)])
+
+        self.boundaries = boundaries
+
     def build_void_distance_field(
         self, surface_path: Path, chunk_size: int = 100_000, subdivisions: int = 0
     ) -> None:
@@ -41,6 +52,8 @@ class DomainData:
         vertices, faces = igl.read_triangle_mesh(surface_path)
 
         vertices, faces = igl.loop(vertices, faces, subdivisions)
+
+        shape = self.boundaries[1, :] - self.boundaries[0, :]
 
         # # Load triangular surface mesh
 

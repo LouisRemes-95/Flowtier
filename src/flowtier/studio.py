@@ -33,3 +33,5 @@ def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
         )
 
     console.print("[green]✔ Domain data build[/green]")
+
+    return 0
