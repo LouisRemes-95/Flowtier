@@ -7,9 +7,7 @@ from flowtier.common import UserError
 
 
 class DomainData:
-    def __init__(
-        self, surface_path: Path, center_lines_path: Path, precision: float
-    ) -> None:
+    def __init__(self, surface_path: Path, center_lines_path: Path, precision: float) -> None:
 
         if precision <= 0:
             raise UserError("precision must be positive.")
@@ -39,13 +37,11 @@ class DomainData:
 
         if boundaries is None:
             vertices, _ = igl.read_triangle_mesh(surface_path)
-            boundaries = np.array([vertices.min(axis=0), vertices.max(axis=0)])
+            boundaries = np.array([np.min(vertices, axis=0), vertices.max(axis=0)])
 
         self.boundaries = boundaries
 
-    def build_void_distance_field(
-        self, surface_path: Path, chunk_size: int = 100_000, subdivisions: int = 0
-    ) -> None:
+    def build_void_distance_field(self, surface_path: Path, chunk_size: int = 100_000, subdivisions: int = 0) -> None:
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive.")
 

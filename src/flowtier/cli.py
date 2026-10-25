@@ -7,10 +7,10 @@ from rich.panel import Panel
 from rich.traceback import install
 from rich_argparse import RichHelpFormatter
 
-install(show_locals=True)
+from .common import UserError, console
+from .studio import AlgConfig, AppConfig, Mode, run_flowtier_studio
 
-from flowtier.common import UserError, console
-from flowtier.studio import AlgConfig, AppConfig, Mode, run_flowtier_studio
+install(show_locals=True)
 
 
 class RichArgumentParser(argparse.ArgumentParser):
@@ -24,7 +24,8 @@ class RichArgumentParser(argparse.ArgumentParser):
 def build_parser() -> RichArgumentParser:
     parser = RichArgumentParser(
         prog="Flowtier",
-        description="Interface to segment filaments by sketching the filament center cross-section given the filament center lines",
+        description="Interface to segment filaments by sketching the filament center cross-section"
+        "given the filament center lines",
         formatter_class=RichHelpFormatter,
     )
 
@@ -62,11 +63,7 @@ def build_parser() -> RichArgumentParser:
         type=Mode,
         choices=list(Mode),
         default=Mode.RESUME,
-        help=(
-            "reset: start fresh in GUI; "
-            "resume: load previous state in GUI; "
-            "silent: apply state without opening GUI"
-        ),
+        help=("reset: start fresh in GUI; resume: load previous state in GUI; silent: apply state without opening GUI"),
     )
     parser.add_argument(
         "--precision",
@@ -115,9 +112,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        surface_path, center_lines_path = resolve_inputs(
-            args.surface_path, args.center_lines_path
-        )
+        surface_path, center_lines_path = resolve_inputs(args.surface_path, args.center_lines_path)
         output_path = resolve_output(surface_path, args.output_dir, args.name)
         app_config = AppConfig(surface_path, center_lines_path, output_path, args.mode)
         alg_config = AlgConfig(args.precision)
@@ -126,7 +121,7 @@ def main() -> int:
 
     except UserError as e:
         console.print(f"[bold red]✖ Error:[/bold red] {e}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":
