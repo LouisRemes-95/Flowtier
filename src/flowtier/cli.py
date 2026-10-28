@@ -7,8 +7,8 @@ from rich.panel import Panel
 from rich.traceback import install
 from rich_argparse import RichHelpFormatter
 
-from .common import UserError, console
-from .studio import AlgConfig, AppConfig, Mode, run_flowtier_studio
+from flowtier.common import UserError, console
+from flowtier.studio import AlgConfig, AppConfig, Mode, run_flowtier_studio
 
 install(show_locals=True)
 

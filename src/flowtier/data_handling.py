@@ -2,8 +2,9 @@ from pathlib import Path
 
 import igl
 import numpy as np
+from rich.progress import BarColumn, Progress, TextColumn
 
-from flowtier.common import UserError
+from flowtier.common import UserError, console
 
 
 class DomainData:
@@ -49,35 +50,49 @@ class DomainData:
 
         vertices, faces = igl.loop(vertices, faces, subdivisions)
 
-        shape = self.boundaries[1, :] - self.boundaries[0, :]
+        shape = np.ceil((self.boundaries[1, :] - self.boundaries[0, :]) / self.precision).astype(int)
 
-        # # Load triangular surface mesh
+        self.void_distance_field = np.empty(shape, dtype=np.float32)
+        flat_distance_field = self.void_distance_field.ravel()
 
-        # # Define regular grid
-        # origin = vertices.min(axis=0)
-        # upper = vertices.max(axis=0)
+        new_boundaries = np.vstack((self.boundaries[0], self.boundaries[0] + (shape - 1) * self.precision))
 
-        # shape = tuple(np.ceil((upper - origin) / voxel_size).astype(int) + 1)
+        if not np.array_equal(self.boundaries[1], new_boundaries[1]):
+            difference = np.abs(new_boundaries[1] - self.boundaries[1])
+            nonzero = difference[difference > 0]
 
-        # # Allocate distance field
-        # distance_field = np.empty(shape, dtype=np.float32)
-        # flat = distance_field.ravel()
+            decimals = max(2, int(np.ceil(-np.log10(nonzero.min()))) + 1) if nonzero.size else 2
 
-        # # Compute signed distances in chunks
-        # for start in range(0, flat.size, chunk_size):
-        #     end = min(start + chunk_size, flat.size)
+            with np.printoptions(precision=decimals, floatmode="fixed", suppress=True):
+                previous = np.array2string(self.boundaries)
+                updated = np.array2string(new_boundaries)
 
-        #     indices = np.arange(start, end)
-        #     ijk = np.column_stack(np.unravel_index(indices, shape))
-        #     points = origin + ijk * voxel_size
+                console.print(
+                    "\n[bold yellow]⚠ Warning:[/bold yellow] Boundaries adjusted to match desired precision.\n"
+                    f"  Previous: {previous.replace(chr(10), chr(10) + ' ' * 12)}\n"
+                    f"  Updated:  {updated.replace(chr(10), chr(10) + ' ' * 12)}\n"
+                )
 
-        #     distances, _, _, _ = igl.signed_distance(
-        #         points,
-        #         vertices,
-        #         faces,
-        #         igl.SIGNED_DISTANCE_TYPE_PSEUDONORMAL,
-        #     )
+            self.boundaries[1, :] = new_boundaries[1]
 
-        #     flat[start:end] = distances
+        with Progress(
+            TextColumn("{task.description}"),
+            BarColumn(complete_style="blue", finished_style="blue"),
+            TextColumn("{task.percentage:>3.0f}%"),
+            TextColumn("[white]{task.elapsed:0.1f}s"),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Computing void distance field", total=flat_distance_field.size)
 
-        # return distance_field, origin
+            for start_index in range(0, flat_distance_field.size, chunk_size):
+                end_index = min(start_index + chunk_size, flat_distance_field.size)
+
+                flat_indices = np.arange(start_index, end_index)
+                grid_indices = np.column_stack(np.unravel_index(flat_indices, shape))
+                points = self.boundaries[0, :] + grid_indices * self.precision
+
+                distances, _, _, _ = igl.signed_distance(points, vertices, faces, igl.SIGNED_DISTANCE_TYPE_PSEUDONORMAL)
+
+                flat_distance_field[flat_indices] = distances
+                progress.update(task, completed=end_index)
