@@ -30,6 +30,9 @@ def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
     with console.status("Building domain data..."):
         domain_data = DomainData(app_config.surface_path, app_config.center_lines_path, alg_config.precision)
 
+    for warning in domain_data.warnings:
+        console.print(warning)
+
     console.print("[green]✔ Domain data build[/green]")
 
     return 0
