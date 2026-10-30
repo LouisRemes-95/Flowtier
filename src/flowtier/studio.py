@@ -1,12 +1,12 @@
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from flowtier.common import console
 from flowtier.data_handling import DomainData
 
 
-class Mode(str, Enum):
+class Mode(StrEnum):
     RESET = "reset"
     RESUME = "resume"
     SILENT = "silent"
