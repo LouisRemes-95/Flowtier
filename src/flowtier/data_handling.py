@@ -170,5 +170,7 @@ class DomainData:
                 distance_transform_cdt(~binary_interface, metric="chessboard").astype(np.float32) * self._precision
             )
 
-        void_sdf[binary_voids == 1] = -void_sdf[binary_voids == 1]
-        self.void_distance_field[np.isnan(self.void_distance_field)] = void_sdf[np.isnan(self.void_distance_field)]
+            void_sdf[binary_voids == 1] = -void_sdf[binary_voids == 1]
+            self.void_distance_field[np.isnan(self.void_distance_field)] = void_sdf[np.isnan(self.void_distance_field)]
+
+        print(self.void_distance_field.size)
