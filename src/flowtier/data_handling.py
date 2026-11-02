@@ -18,8 +18,8 @@ class DomainData:
         self._precision = precision
 
         self._set_and_adjust_boundaries(surface_path)
-        self._build_void_distance_field(surface_path, subdivisions=2, chunk_size=1_000_000)
-        self._build_center_lines(center_lines_path)
+        # self._build_void_distance_field(surface_path, subdivisions=2, chunk_size=1_000_000)
+        self._build_center_lines_dependencies(center_lines_path)
 
     @staticmethod
     def _read_ply_bounds(surface_path: Path) -> np.ndarray | None:
@@ -176,12 +176,20 @@ class DomainData:
 
         print(self.void_distance_field.size)
 
-    def _build_center_lines(self, center_lines_path: Path) -> None:
+    def _build_center_lines_dependencies(self, center_lines_path: Path) -> None:
         with np.load(center_lines_path) as data:
             if len(data.files) != 1:
-                raise ValueError("The .npz file must contain exactly one array.")
+                raise UserError("The .npz file must contain exactly one array.")
 
-            center_lines = data[data.files[0]]
+            center_lines = data[data.files[0]].astype(np.float32)
 
-            if center_lines.ndim != 3 or center_lines.shape[1:] != (2, 3):
-                raise ValueError(f"Expected an (N, 2) array, got {center_lines.shape}.")
+        if center_lines.ndim != 3 or center_lines.shape[1:] != (2, 3):
+            raise UserError(f"Expected an (N, 2, 3) array, got {center_lines.shape}.")
+
+        center_lines = (center_lines - self.boundaries[0]) / self._precision
+
+        self._build_affine_projection_coefficients(center_lines)
+
+    def _build_affine_projection_coefficients(self, center_lines: np.ndarray) -> None:
+        pass
+        # self._affine_projection_coefs =
