@@ -3,6 +3,7 @@ from pathlib import Path
 import igl
 import numpy as np
 import trimesh
+from numba import njit, prange
 from rich.progress import BarColumn, Progress, TextColumn
 from scipy.ndimage import binary_dilation, binary_propagation, distance_transform_cdt
 
@@ -189,6 +190,7 @@ class DomainData:
         center_lines = (center_lines - self.boundaries[0]) / self._precision
 
         self._build_affine_projection_coefficients(center_lines)
+        self._build_closest_center_lines()
 
     def _build_affine_projection_coefficients(self, center_lines: np.ndarray) -> None:
         origins = center_lines.mean(axis=1)
@@ -213,7 +215,7 @@ class DomainData:
         ey = np.cross(directions, ex)
 
         # Affine coefficients: a0, ax, ay, b0, bx, by, bz
-        self.affine_projection_coefficients = np.column_stack(
+        self._affine_projection_coefficients = np.column_stack(
             (
                 -np.sum(origins * ex, axis=1),
                 ex[:, 0],
@@ -224,3 +226,96 @@ class DomainData:
                 ey[:, 2],
             )
         ).astype(np.float32)
+
+    def _build_closest_center_lines(self, chunk_size: int = 1_000_000) -> None:
+        n_lines = self._affine_projection_coefficients.shape[0]
+
+        if n_lines < 4:
+            raise ValueError("At least four center lines are required.")
+
+        shape = tuple(self._grid_shape)
+        n_voxels = int(np.prod(shape))
+
+        dtype = np.uint8 if n_lines <= 256 else np.uint16
+
+        self._closest_center_lines = np.empty((*shape, 4), dtype=dtype)
+        flat_output = self._closest_center_lines.reshape(-1, 4)
+
+        with Progress(
+            TextColumn("{task.description}"),
+            BarColumn(complete_style="blue", finished_style="blue"),
+            TextColumn("{task.percentage:>3.0f}%"),
+            TextColumn("[white]{task.elapsed:0.1f}s"),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Finding closest centre lines", total=n_voxels)
+
+            for start in range(0, n_voxels, chunk_size):
+                stop = min(start + chunk_size, n_voxels)
+
+                indices = np.arange(start, stop)
+                coordinates = np.column_stack(np.unravel_index(indices, shape)).astype(np.float32)
+
+                # Numba computes into a temporary int32 array
+                closest = np.empty((stop - start, 4), dtype=np.int32)
+
+                _find_closest_center_lines(
+                    coordinates,
+                    self._affine_projection_coefficients,
+                    closest,
+                )
+
+                flat_output[start:stop] = closest
+
+                progress.update(task, advance=stop - start)
+
+
+@njit(inline="always")
+def _bilinear_interpolate(distance_field: np.ndarray, u: float, v: float) -> float:
+    nx, ny = distance_field.shape
+
+    i = int(np.floor(u))
+    j = int(np.floor(v))
+
+    if i < 0 or i >= nx - 1 or j < 0 or j >= ny - 1:
+        return np.inf
+
+    du = u - i
+    dv = v - j
+
+    return (1 - du) * ((1 - dv) * distance_field[i, j] + dv * distance_field[i, j + 1]) + du * (
+        (1 - dv) * distance_field[i + 1, j] + dv * distance_field[i + 1, j + 1]
+    )
+
+
+@njit(parallel=True, cache=True)
+def _find_closest_center_lines(
+    coordinates: np.ndarray,
+    coefficients: np.ndarray,
+    output: np.ndarray,
+) -> None:
+    n_lines = coefficients.shape[0]
+    n_closest = output.shape[1]
+
+    for p in prange(coordinates.shape[0]):
+        i, j, k = coordinates[p]
+
+        best_distances = np.full(n_closest, np.inf)
+        best_indices = np.full(n_closest, -1, dtype=np.int32)
+
+        for line in range(n_lines):
+            a0, ax, ay, b0, bx, by, bz = coefficients[line]
+
+            u = a0 + ax * i + ay * j
+            v = b0 + bx * i + by * j + bz * k
+
+            distance_squared = u * u + v * v
+
+            worst = np.argmax(best_distances)
+
+            if distance_squared < best_distances[worst]:
+                best_distances[worst] = distance_squared
+                best_indices[worst] = line
+
+        output[p] = best_indices
