@@ -191,5 +191,36 @@ class DomainData:
         self._build_affine_projection_coefficients(center_lines)
 
     def _build_affine_projection_coefficients(self, center_lines: np.ndarray) -> None:
-        pass
-        # self._affine_projection_coefs =
+        origins = center_lines.mean(axis=1)
+
+        directions = center_lines[:, 1] - center_lines[:, 0]
+        norms = np.linalg.norm(directions, axis=1)
+
+        if not np.all(np.isfinite(norms)) or np.any(norms <= np.finfo(np.float32).eps):
+            raise ValueError("Center lines must have finite, distinct endpoints.")
+
+        directions /= norms[:, None]
+
+        vertical = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        ex = np.cross(vertical, directions)
+
+        norms_ex = np.linalg.norm(ex, axis=1)
+        is_vertical = norms_ex <= np.finfo(np.float32).eps
+
+        ex[is_vertical] = [1.0, 0.0, 0.0]
+        ex[~is_vertical] /= norms_ex[~is_vertical, None]
+
+        ey = np.cross(directions, ex)
+
+        # Affine coefficients: a0, ax, ay, b0, bx, by, bz
+        self.affine_projection_coefficients = np.column_stack(
+            (
+                -np.sum(origins * ex, axis=1),
+                ex[:, 0],
+                ex[:, 1],
+                -np.sum(origins * ey, axis=1),
+                ey[:, 0],
+                ey[:, 1],
+                ey[:, 2],
+            )
+        ).astype(np.float32)
