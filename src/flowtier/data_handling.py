@@ -1,3 +1,4 @@
+from functools import cached_property
 from pathlib import Path
 
 import igl
@@ -5,7 +6,7 @@ import numpy as np
 import trimesh
 from numba import njit, prange
 from rich.progress import BarColumn, Progress, TextColumn
-from scipy.ndimage import binary_dilation, binary_propagation, distance_transform_cdt
+from scipy.ndimage import binary_dilation, binary_propagation, distance_transform_edt
 
 from flowtier.common import UserError, console
 
@@ -19,8 +20,14 @@ class DomainData:
         self._precision = precision
 
         self._set_and_adjust_boundaries(surface_path)
-        # self._build_void_distance_field(surface_path, subdivisions=2, chunk_size=1_000_000)
+        self._build_void_distance_field(surface_path, subdivisions=2, chunk_size=1_000_000)
+        self._build_initial_cross_section()
         self._build_center_lines_dependencies(center_lines_path)
+        self._update_center_lines_distance_field()
+
+    @cached_property
+    def _cross_section_distance_field(self) -> np.ndarray:
+        return distance_transform_edt(~self._cross_section).astype(np.float32)
 
     @staticmethod
     def _read_ply_bounds(surface_path: Path) -> np.ndarray | None:
@@ -168,14 +175,10 @@ class DomainData:
             binary_voids = binary_propagation(self.void_distance_field < 0, mask=~binary_interface, structure=structure)
 
         with console.status("Computing the rest of the void distance field..."):
-            void_sdf = (
-                distance_transform_cdt(~binary_interface, metric="chessboard").astype(np.float32) * self._precision
-            )
+            void_sdf = distance_transform_edt(~binary_interface).astype(np.float32) * self._precision
 
             void_sdf[binary_voids == 1] = -void_sdf[binary_voids == 1]
             self.void_distance_field[np.isnan(self.void_distance_field)] = void_sdf[np.isnan(self.void_distance_field)]
-
-        print(self.void_distance_field.size)
 
     def _build_center_lines_dependencies(self, center_lines_path: Path) -> None:
         with np.load(center_lines_path) as data:
@@ -228,7 +231,8 @@ class DomainData:
         ).astype(np.float32)
 
     def _build_closest_center_lines(self, chunk_size: int = 1_000_000) -> None:
-        n_lines = self._affine_projection_coefficients.shape[0]
+        coefficients = self._affine_projection_coefficients
+        n_lines = coefficients.shape[0]
 
         if n_lines < 4:
             raise ValueError("At least four center lines are required.")
@@ -254,26 +258,71 @@ class DomainData:
             for start in range(0, n_voxels, chunk_size):
                 stop = min(start + chunk_size, n_voxels)
 
-                indices = np.arange(start, stop)
-                coordinates = np.column_stack(np.unravel_index(indices, shape)).astype(np.float32)
-
-                # Numba computes into a temporary int32 array
                 closest = np.empty((stop - start, 4), dtype=np.int32)
 
                 _find_closest_center_lines(
-                    coordinates,
-                    self._affine_projection_coefficients,
+                    start,
+                    coefficients,
                     closest,
+                    shape[1],
+                    shape[2],
                 )
 
                 flat_output[start:stop] = closest
 
                 progress.update(task, advance=stop - start)
 
+    def _build_initial_cross_section(self) -> None:
+        n = int(np.max(self._grid_shape))
+        shape = (n * 2 + 1,) * 2
+
+        self._cross_section = np.zeros(shape, dtype=bool)
+        self._cross_section[n + 1, n + 1] = True
+
+    def _update_center_lines_distance_field(self, chunk_size: int = 1_000_000) -> None:
+        shape = tuple(self._grid_shape)
+        n_voxels = int(np.prod(shape))
+
+        if not hasattr(self, "_center_lines_distance_field"):
+            self._center_lines_distance_field = np.empty(shape, dtype=np.float32)
+
+        flat_output = self._center_lines_distance_field.ravel()
+        flat_closest = self._closest_center_lines.reshape(-1, 4)
+
+        with Progress(
+            TextColumn("{task.description}"),
+            BarColumn(complete_style="blue", finished_style="blue"),
+            TextColumn("{task.percentage:>3.0f}%"),
+            TextColumn("[white]{task.elapsed:0.1f}s"),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Computing center lines distance field", total=n_voxels)
+
+            for start in range(0, n_voxels, chunk_size):
+                stop = min(start + chunk_size, n_voxels)
+
+                _compute_minimum_distance(
+                    start,
+                    flat_closest[start:stop],
+                    self._affine_projection_coefficients,
+                    self._cross_section_distance_field,
+                    flat_output[start:stop],
+                    shape[1],
+                    shape[2],
+                )
+
+                progress.update(task, advance=stop - start)
+
+        self._center_lines_distance_field *= self._precision
+
 
 @njit(inline="always")
 def _bilinear_interpolate(distance_field: np.ndarray, u: float, v: float) -> float:
     nx, ny = distance_field.shape
+
+    u += nx // 2
+    v += ny // 2
 
     i = int(np.floor(u))
     j = int(np.floor(v))
@@ -291,15 +340,21 @@ def _bilinear_interpolate(distance_field: np.ndarray, u: float, v: float) -> flo
 
 @njit(parallel=True, cache=True)
 def _find_closest_center_lines(
-    coordinates: np.ndarray,
+    start: int,
     coefficients: np.ndarray,
     output: np.ndarray,
+    ny: int,
+    nz: int,
 ) -> None:
     n_lines = coefficients.shape[0]
     n_closest = output.shape[1]
 
-    for p in prange(coordinates.shape[0]):
-        i, j, k = coordinates[p]
+    for p in prange(output.shape[0]):
+        index = start + p
+
+        i = index // (ny * nz)
+        j = (index // nz) % ny
+        k = index % nz
 
         best_distances = np.full(n_closest, np.inf)
         best_indices = np.full(n_closest, -1, dtype=np.int32)
@@ -319,3 +374,38 @@ def _find_closest_center_lines(
                 best_indices[worst] = line
 
         output[p] = best_indices
+
+
+@njit(parallel=True, cache=True)
+def _compute_minimum_distance(
+    start: int,
+    closest_lines: np.ndarray,
+    coefficients: np.ndarray,
+    distance_field: np.ndarray,
+    output: np.ndarray,
+    ny: int,
+    nz: int,
+) -> None:
+    for p in prange(output.shape[0]):
+        index = start + p
+
+        i = index // (ny * nz)
+        j = (index // nz) % ny
+        k = index % nz
+
+        minimum = np.inf
+
+        for c in range(closest_lines.shape[1]):
+            line = closest_lines[p, c]
+
+            a0, ax, ay, b0, bx, by, bz = coefficients[line]
+
+            u = a0 + ax * i + ay * j
+            v = b0 + bx * i + by * j + bz * k
+
+            distance = _bilinear_interpolate(distance_field, u, v)
+
+            if distance < minimum:
+                minimum = distance
+
+        output[p] = minimum
