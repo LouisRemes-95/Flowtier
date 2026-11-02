@@ -19,6 +19,7 @@ class DomainData:
 
         self._set_and_adjust_boundaries(surface_path)
         self._build_void_distance_field(surface_path, subdivisions=2, chunk_size=1_000_000)
+        self._build_center_lines(center_lines_path)
 
     @staticmethod
     def _read_ply_bounds(surface_path: Path) -> np.ndarray | None:
@@ -174,3 +175,13 @@ class DomainData:
             self.void_distance_field[np.isnan(self.void_distance_field)] = void_sdf[np.isnan(self.void_distance_field)]
 
         print(self.void_distance_field.size)
+
+    def _build_center_lines(self, center_lines_path: Path) -> None:
+        with np.load(center_lines_path) as data:
+            if len(data.files) != 1:
+                raise ValueError("The .npz file must contain exactly one array.")
+
+            center_lines = data[data.files[0]]
+
+            if center_lines.ndim != 3 or center_lines.shape[1:] != (2, 3):
+                raise ValueError(f"Expected an (N, 2) array, got {center_lines.shape}.")
