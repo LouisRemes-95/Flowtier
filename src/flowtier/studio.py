@@ -73,7 +73,14 @@ class FlowtierStudio(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._3d_plotter = QtInteractor(container)
-        self._3d_plotter.show_grid(xtitle="Axis 0", ytitle="Axis 1", ztitle="Axis 2")
+        bounds = self._domain_data.boundaries
+        self._3d_plotter.show_grid(
+            bounds=(0, bounds[1, 0], 0, bounds[1, 1], 0, bounds[1, 2]),
+            xtitle="Axis 0",
+            ytitle="Axis 1",
+            ztitle="Axis 2",
+        )
+
         layout.addWidget(self._3d_plotter.interactor)
 
         return container
