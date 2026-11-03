@@ -4,6 +4,7 @@ from enum import StrEnum
 from pathlib import Path
 from time import perf_counter
 
+import numpy as np
 import pyvista as pv
 from PySide6.QtWidgets import (
     QApplication,
@@ -79,28 +80,28 @@ class FlowtierStudio(QMainWindow):
         return container
 
     def _update_3d_view(self) -> None:
-        grid = pv.ImageData()
-        grid.dimensions = self._domain_data.grid_shape + 1
-        grid.spacing = (self._domain_data.precision,) * 3
+        binary = self._domain_data.void_distance_field > 0
 
         start = perf_counter()
 
-        grid.cell_data["values"] = (self._domain_data.void_distance_field > 0).ravel(order="F")
-        surface = grid.threshold(0.5).extract_surface(algorithm="dataset_surface")
+        surface = binary_to_voxel_surface(
+            binary,
+            self._domain_data.precision,
+        )
 
-        elapsed = perf_counter() - start
-        print(f"Elapsed time: {elapsed:.3f} s")
+        surface.translate(
+            self._domain_data.boundaries[0] - self._domain_data.precision / 2,
+            inplace=True,
+        )
+
+        print(f"Surface extraction: {perf_counter() - start:.3f} s")
 
         self._3d_plotter.add_mesh(
             surface,
             name="binary_mesh",
             color="cornflowerblue",
-            show_edges=True,
-            edge_color="black",
-            line_width=1,
+            show_edges=False,
         )
-
-        self._3d_plotter.show_grid(xtitle="Axis 0", ytitle="Axis 1", ztitle="Axis 2")
 
     def _build_cross_section_sketcher(self) -> QWidget:
         container = QWidget()
@@ -131,3 +132,46 @@ def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
     console.print("[green]✔ Segmentation handling complete[/green]")
 
     return 0
+
+
+def binary_to_voxel_surface(binary: np.ndarray, voxel_size: float) -> pv.PolyData:
+    padded = np.pad(binary, 1, constant_values=False)
+
+    vertices = []
+    faces = []
+
+    directions = [
+        ((-1, 0, 0), [(0, 0, 0), (0, 0, 1), (0, 1, 1), (0, 1, 0)]),
+        ((1, 0, 0), [(1, 0, 0), (1, 1, 0), (1, 1, 1), (1, 0, 1)]),
+        ((0, -1, 0), [(0, 0, 0), (1, 0, 0), (1, 0, 1), (0, 0, 1)]),
+        ((0, 1, 0), [(0, 1, 0), (0, 1, 1), (1, 1, 1), (1, 1, 0)]),
+        ((0, 0, -1), [(0, 0, 0), (0, 1, 0), (1, 1, 0), (1, 0, 0)]),
+        ((0, 0, 1), [(0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]),
+    ]
+
+    nx, ny, nz = binary.shape
+
+    for (dx, dy, dz), corners in directions:
+        neighbour = padded[
+            1 + dx : 1 + dx + nx,
+            1 + dy : 1 + dy + ny,
+            1 + dz : 1 + dz + nz,
+        ]
+
+        indices = np.argwhere(binary & ~neighbour)
+
+        if len(indices) == 0:
+            continue
+
+        base = len(vertices)
+        offsets = np.asarray(corners)
+
+        vertices.extend(((indices[:, None, :] + offsets[None, :, :]) * voxel_size).reshape(-1, 3))
+
+        face_ids = np.arange(base, base + 4 * len(indices)).reshape(-1, 4)
+        faces.extend(np.column_stack((np.full(len(indices), 4), face_ids)))
+
+    return pv.PolyData(
+        np.asarray(vertices),
+        np.asarray(faces).ravel(),
+    )
