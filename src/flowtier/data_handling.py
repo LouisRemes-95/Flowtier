@@ -25,6 +25,14 @@ class DomainData:
         self._build_center_lines_dependencies(center_lines_path)
         self._update_center_lines_distance_field()
 
+    @property
+    def precision(self) -> float:
+        return self._precision
+
+    @property
+    def grid_shape(self) -> float:
+        return self._grid_shape
+
     @cached_property
     def _cross_section_distance_field(self) -> np.ndarray:
         return distance_transform_edt(~self._cross_section).astype(np.float32)
