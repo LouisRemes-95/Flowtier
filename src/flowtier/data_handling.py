@@ -5,6 +5,7 @@ import igl
 import numpy as np
 import trimesh
 from numba import njit, prange
+from pyvista import PolyData
 from rich.progress import BarColumn, Progress, TextColumn
 from scipy.ndimage import binary_dilation, binary_propagation, distance_transform_edt
 
@@ -33,9 +34,39 @@ class DomainData:
     def grid_shape(self) -> float:
         return self._grid_shape
 
+    @property
+    def boundaries(self) -> np.ndarray:
+        return self._boundaries
+
     @cached_property
     def _cross_section_distance_field(self) -> np.ndarray:
         return distance_transform_edt(~self._cross_section).astype(np.float32)
+
+    @property
+    def plotting_surfaces(self) -> list[PolyData]:
+        distance = self.void_distance_field
+        precision = self.precision
+
+        binary = distance > 0
+
+        shell_voxel_candidates = binary & (distance <= precision)
+
+        # Include the six domain boundaries
+        shell_voxel_candidates[0, :, :] |= binary[0, :, :]
+        shell_voxel_candidates[-1, :, :] |= binary[-1, :, :]
+        shell_voxel_candidates[:, 0, :] |= binary[:, 0, :]
+        shell_voxel_candidates[:, -1, :] |= binary[:, -1, :]
+        shell_voxel_candidates[:, :, 0] |= binary[:, :, 0]
+        shell_voxel_candidates[:, :, -1] |= binary[:, :, -1]
+
+        surface = binary_to_voxel_surface(binary, shell_voxel_candidates, precision)
+
+        surface.translate(
+            self.boundaries[0] - precision / 2,
+            inplace=True,
+        )
+
+        return [surface]
 
     @staticmethod
     def _read_ply_bounds(surface_path: Path) -> np.ndarray | None:
@@ -83,7 +114,7 @@ class DomainData:
 
             self.warnings.append(warning)
 
-        self.boundaries = adjusted_boundaries
+        self._boundaries = adjusted_boundaries
 
     def _build_void_distance_field(self, surface_path: Path, chunk_size: int = 100_000, subdivisions: int = 0) -> None:
         if chunk_size <= 0:
@@ -417,3 +448,118 @@ def _compute_minimum_distance(
                 minimum = distance
 
         output[p] = minimum
+
+
+_CORNERS = np.array(
+    [
+        [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]],
+        [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]],
+        [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]],
+        [[0, 1, 0], [0, 1, 1], [1, 1, 1], [1, 1, 0]],
+        [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]],
+        [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]],
+    ],
+    dtype=np.int8,
+)
+
+
+@njit(inline="always")
+def _exposed_faces(binary, i, j, k):
+    nx, ny, nz = binary.shape
+
+    return (
+        i == 0 or not binary[i - 1, j, k],
+        i == nx - 1 or not binary[i + 1, j, k],
+        j == 0 or not binary[i, j - 1, k],
+        j == ny - 1 or not binary[i, j + 1, k],
+        k == 0 or not binary[i, j, k - 1],
+        k == nz - 1 or not binary[i, j, k + 1],
+    )
+
+
+@njit(parallel=True, cache=True)
+def _count_candidate_faces(binary, indices):
+    nx, ny, nz = binary.shape
+    counts = np.empty(len(indices), dtype=np.uint8)
+
+    for p in prange(len(indices)):
+        index = indices[p]
+
+        i = index // (ny * nz)
+        j = (index // nz) % ny
+        k = index % nz
+
+        if not binary[i, j, k]:
+            counts[p] = 0
+            continue
+
+        exposed = _exposed_faces(binary, i, j, k)
+
+        count = 0
+        for d in range(6):
+            count += exposed[d]
+
+        counts[p] = count
+
+    return counts
+
+
+@njit(parallel=True, cache=True)
+def _build_candidate_faces(binary, indices, offsets, voxel_size, corners, vertices, faces):
+    ny, nz = binary.shape[1:]
+
+    for p in prange(len(indices)):
+        index = indices[p]
+
+        i = index // (ny * nz)
+        j = (index // nz) % ny
+        k = index % nz
+
+        if not binary[i, j, k]:
+            continue
+
+        exposed = _exposed_faces(binary, i, j, k)
+        face_id = offsets[p]
+
+        for d in range(6):
+            if not exposed[d]:
+                continue
+
+            base = face_id * 4
+            faces[face_id, 0] = 4
+
+            for c in range(4):
+                vertices[base + c, 0] = (i + corners[d, c, 0]) * voxel_size
+                vertices[base + c, 1] = (j + corners[d, c, 1]) * voxel_size
+                vertices[base + c, 2] = (k + corners[d, c, 2]) * voxel_size
+                faces[face_id, c + 1] = base + c
+
+            face_id += 1
+
+
+def binary_to_voxel_surface(
+    binary: np.ndarray,
+    candidates: np.ndarray,
+    voxel_size: float,
+) -> PolyData:
+    # Candidate voxel indices
+    indices = np.flatnonzero(candidates)
+
+    # Count exposed faces
+    counts = _count_candidate_faces(binary, indices)
+
+    # Calculate each candidate's output offset
+    offsets = np.empty(len(indices) + 1, dtype=np.int64)
+    offsets[0] = 0
+    np.cumsum(counts, out=offsets[1:])
+
+    n_faces = int(offsets[-1])
+
+    # Allocate output
+    vertices = np.empty((n_faces * 4, 3), dtype=np.float32)
+    faces = np.empty((n_faces, 5), dtype=np.int64)
+
+    # Build geometry in parallel
+    _build_candidate_faces(binary, indices, offsets, voxel_size, _CORNERS, vertices, faces)
+
+    return PolyData(vertices, faces.ravel())
