@@ -59,12 +59,9 @@ class DomainData:
         shell_voxel_candidates[:, :, 0] |= binary[:, :, 0]
         shell_voxel_candidates[:, :, -1] |= binary[:, :, -1]
 
-        surface = binary_to_voxel_surface(binary, shell_voxel_candidates, precision)
+        surface = self.binary_to_voxel_surface(binary, shell_voxel_candidates, precision)
 
-        surface.translate(
-            self.boundaries[0] - precision / 2,
-            inplace=True,
-        )
+        surface.translate(self.boundaries[0] - precision / 2, inplace=True)
 
         return [surface]
 
@@ -355,6 +352,24 @@ class DomainData:
 
         self._center_lines_distance_field *= self._precision
 
+    @staticmethod
+    def binary_to_voxel_surface(binary: np.ndarray, candidates: np.ndarray, voxel_size: float) -> PolyData:
+        indices = np.flatnonzero(candidates)
+        counts = _count_candidate_faces(binary, indices)
+
+        offsets = np.empty(len(indices) + 1, dtype=np.int64)
+        offsets[0] = 0
+        np.cumsum(counts, out=offsets[1:])
+
+        n_faces = int(offsets[-1])
+
+        vertices = np.empty((n_faces * 4, 3), dtype=np.float32)
+        faces = np.empty((n_faces, 5), dtype=np.int64)
+
+        _build_candidate_faces(binary, indices, offsets, voxel_size, _CORNERS, vertices, faces)
+
+        return PolyData(vertices, faces.ravel())
+
 
 @njit(inline="always")
 def _bilinear_interpolate(distance_field: np.ndarray, u: float, v: float) -> float:
@@ -535,31 +550,3 @@ def _build_candidate_faces(binary, indices, offsets, voxel_size, corners, vertic
                 faces[face_id, c + 1] = base + c
 
             face_id += 1
-
-
-def binary_to_voxel_surface(
-    binary: np.ndarray,
-    candidates: np.ndarray,
-    voxel_size: float,
-) -> PolyData:
-    # Candidate voxel indices
-    indices = np.flatnonzero(candidates)
-
-    # Count exposed faces
-    counts = _count_candidate_faces(binary, indices)
-
-    # Calculate each candidate's output offset
-    offsets = np.empty(len(indices) + 1, dtype=np.int64)
-    offsets[0] = 0
-    np.cumsum(counts, out=offsets[1:])
-
-    n_faces = int(offsets[-1])
-
-    # Allocate output
-    vertices = np.empty((n_faces * 4, 3), dtype=np.float32)
-    faces = np.empty((n_faces, 5), dtype=np.int64)
-
-    # Build geometry in parallel
-    _build_candidate_faces(binary, indices, offsets, voxel_size, _CORNERS, vertices, faces)
-
-    return PolyData(vertices, faces.ravel())
