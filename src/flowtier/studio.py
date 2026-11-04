@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from time import perf_counter
+from typing import Final
 
 import numpy as np
 from PySide6.QtCore import (
@@ -136,9 +137,10 @@ class FlowtierStudio(QMainWindow):
 
 
 class CrossSectionSketcher(QGraphicsView):
-    IMAGE_MARGIN = 10
-    GRID_RESOLUTION = 8
-    FADE_WIDTH = 10
+    IMAGE_MARGIN: Final = 10
+    GRID_RESOLUTION: Final = 8
+
+    ZOOM_FACTOR: Final = 1.15
 
     def __init__(self, app_state: AppState) -> None:
         super().__init__()
@@ -276,6 +278,12 @@ class CrossSectionSketcher(QGraphicsView):
             return
 
         super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event) -> None:
+        factor = self.ZOOM_FACTOR if event.angleDelta().y() > 0 else 1 / self.ZOOM_FACTOR
+
+        self.scale(factor, factor)
+        event.accept()
 
 
 def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
