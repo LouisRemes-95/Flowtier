@@ -1,4 +1,3 @@
-import math
 import sys
 from dataclasses import dataclass
 from enum import StrEnum
@@ -136,30 +135,10 @@ class FlowtierStudio(QMainWindow):
         print(f"Surface plotting: {perf_counter() - start:.3f} s")
 
 
-class PixelPixmapItem(QGraphicsPixmapItem):
-    def paint(self, painter, option, widget=None):
-        if self.scene() is None or not self.scene().views():
-            return
-
-        view = self.scene().views()[0]
-        visible = view.mapToScene(view.viewport().rect()).boundingRect()
-
-        x_min = math.ceil(visible.left())
-        y_min = math.ceil(visible.top())
-        x_max = math.floor(visible.right())
-        y_max = math.floor(visible.bottom())
-
-        clip = QRectF(x_min, y_min, max(0, x_max - x_min), max(0, y_max - y_min))
-
-        painter.save()
-        painter.setClipRect(self.mapRectFromScene(clip), Qt.ClipOperation.IntersectClip)
-        super().paint(painter, option, widget)
-        painter.restore()
-
-
 class CrossSectionSketcher(QGraphicsView):
     IMAGE_MARGIN = 10
     GRID_RESOLUTION = 8
+    FADE_WIDTH = 10
 
     def __init__(self, app_state: AppState) -> None:
         super().__init__()
@@ -196,7 +175,7 @@ class CrossSectionSketcher(QGraphicsView):
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
 
-        self._pixmap_item = PixelPixmapItem()
+        self._pixmap_item = QGraphicsPixmapItem()
         self.scene.addItem(self._pixmap_item)
 
         self.scene.addItem(self._grid_overlay())
@@ -266,6 +245,37 @@ class CrossSectionSketcher(QGraphicsView):
         grid_overlay.setTransform(QTransform.fromScale(*tuple(cross_section_shape / overlay_shape)))
 
         return grid_overlay
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.RightButton:
+            self._panning = True
+            self._pan_start = event.pos()
+            event.accept()
+            return
+
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._panning:
+            delta = event.pos() - self._pan_start
+            self._pan_start = event.pos()
+
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+
+            event.accept()
+            self.viewport().update()
+            return
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.RightButton:
+            self._panning = False
+            event.accept()
+            return
+
+        super().mouseReleaseEvent(event)
 
 
 def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
