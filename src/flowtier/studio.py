@@ -15,6 +15,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QImage,
     QPixmap,
+    QTransform,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -71,6 +72,11 @@ class AppConfig:
 class FlowtierStudio(QMainWindow):
     def __init__(self, app_state: AppState, app_config: AppConfig) -> None:
         super().__init__()
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #353535;
+            }
+        """)
 
         self.app_state = app_state
         self._app_config = app_config
@@ -128,6 +134,7 @@ class FlowtierStudio(QMainWindow):
 
 class CrossSectionSketcher(QGraphicsView):
     IMAGE_MARGIN = 10
+    GRID_RESOLUTION = 8
 
     def __init__(self, app_state: AppState) -> None:
         super().__init__()
@@ -139,6 +146,11 @@ class CrossSectionSketcher(QGraphicsView):
         self._build_conections()
 
         self.setMinimumSize(300, 300)
+        self.setStyleSheet("""
+            QGraphicsView {
+                border: 1px solid #353535;
+            }
+        """)
 
     def _build_view(self) -> None:
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -159,6 +171,8 @@ class CrossSectionSketcher(QGraphicsView):
 
         self._pixmap_item = QGraphicsPixmapItem()
         self.scene.addItem(self._pixmap_item)
+
+        self.scene.addItem(self._grid_overlay())
 
     def _build_conections(self) -> None:
         self.app_state.domain_data_changed.connect(self._update_view)
@@ -189,10 +203,10 @@ class CrossSectionSketcher(QGraphicsView):
 
         center = np.array(cross_section.shape) // 2
 
-        x_min = min(cols.min(), center[1]) - self.IMAGE_MARGIN
+        x_min = min(cols.min(), center[1]) - self.IMAGE_MARGIN + 1
         x_max = max(cols.max(), center[1]) + self.IMAGE_MARGIN + 1
 
-        y_min = min(rows.min(), center[0]) - self.IMAGE_MARGIN
+        y_min = min(rows.min(), center[0]) - self.IMAGE_MARGIN + 1
         y_max = max(rows.max(), center[0]) + self.IMAGE_MARGIN + 1
 
         rect = QRectF(
@@ -203,6 +217,28 @@ class CrossSectionSketcher(QGraphicsView):
         )
 
         self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+
+    def _grid_overlay(self) -> QGraphicsPixmapItem:
+        grid_overlay = QGraphicsPixmapItem()
+        grid_overlay.setZValue(1)
+
+        cross_section_shape = np.array(self.app_state.domain_data.cross_section.shape)
+        overlay_shape = cross_section_shape * self.GRID_RESOLUTION + 1
+
+        overlay = np.zeros(overlay_shape, dtype=bool)
+        overlay[:: self.GRID_RESOLUTION, :] = True
+        overlay[:, :: self.GRID_RESOLUTION] = True
+
+        rgba = np.zeros((*overlay.shape, 4), dtype=np.uint8)
+        rgba[overlay] = [53, 53, 53, 255]  # Opaque blue; False remains transparent
+
+        height, width = overlay.shape
+        image = QImage(rgba.data, width, height, 4 * width, QImage.Format.Format_RGBA8888)
+
+        grid_overlay.setPixmap(QPixmap.fromImage(image.copy()))
+        grid_overlay.setTransform(QTransform.fromScale(*tuple(cross_section_shape / overlay_shape)))
+
+        return grid_overlay
 
 
 def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
