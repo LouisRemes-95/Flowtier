@@ -1,3 +1,4 @@
+import math
 import sys
 from dataclasses import dataclass
 from enum import StrEnum
@@ -13,6 +14,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
+    QColor,
     QImage,
     QPixmap,
     QTransform,
@@ -32,6 +34,8 @@ from rich.text import Text
 
 from flowtier.common import console
 from flowtier.data_handling import DomainData
+
+BACKGROUND_COLOR = QColor("#353535")
 
 STYTE_SHEET = """
 """
@@ -132,6 +136,27 @@ class FlowtierStudio(QMainWindow):
         print(f"Surface plotting: {perf_counter() - start:.3f} s")
 
 
+class PixelPixmapItem(QGraphicsPixmapItem):
+    def paint(self, painter, option, widget=None):
+        if self.scene() is None or not self.scene().views():
+            return
+
+        view = self.scene().views()[0]
+        visible = view.mapToScene(view.viewport().rect()).boundingRect()
+
+        x_min = math.ceil(visible.left())
+        y_min = math.ceil(visible.top())
+        x_max = math.floor(visible.right())
+        y_max = math.floor(visible.bottom())
+
+        clip = QRectF(x_min, y_min, max(0, x_max - x_min), max(0, y_max - y_min))
+
+        painter.save()
+        painter.setClipRect(self.mapRectFromScene(clip), Qt.ClipOperation.IntersectClip)
+        super().paint(painter, option, widget)
+        painter.restore()
+
+
 class CrossSectionSketcher(QGraphicsView):
     IMAGE_MARGIN = 10
     GRID_RESOLUTION = 8
@@ -164,12 +189,14 @@ class CrossSectionSketcher(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
 
+        self.setBackgroundBrush(BACKGROUND_COLOR)
+
     def _build_dependencies(self) -> None:
 
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
 
-        self._pixmap_item = QGraphicsPixmapItem()
+        self._pixmap_item = PixelPixmapItem()
         self.scene.addItem(self._pixmap_item)
 
         self.scene.addItem(self._grid_overlay())
