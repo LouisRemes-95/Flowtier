@@ -139,6 +139,7 @@ class FlowtierStudio(QMainWindow):
 class CrossSectionSketcher(QGraphicsView):
     IMAGE_MARGIN: Final = 10
     GRID_RESOLUTION: Final = 8
+    MIN_VISIBLE_PIXELS: Final = 11
 
     ZOOM_FACTOR: Final = 1.15
 
@@ -290,13 +291,18 @@ class CrossSectionSketcher(QGraphicsView):
             viewport_rect.height() / image_rect.height(),
         )
 
+        max_scale = (
+            min(
+                viewport_rect.width(),
+                viewport_rect.height(),
+            )
+            / 11
+        )
+
         current_scale = self.transform().m11()
-        new_scale = current_scale * factor
+        new_scale = np.clip(current_scale * factor, min_scale, max_scale)
 
-        if new_scale < min_scale:
-            factor = min_scale / current_scale
-
-        self.scale(factor, factor)
+        self.scale(new_scale / current_scale, new_scale / current_scale)
         event.accept()
 
 
