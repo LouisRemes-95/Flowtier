@@ -10,6 +10,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QGraphicsView,
     QHBoxLayout,
     QMainWindow,
     QWidget,
@@ -120,6 +121,13 @@ class FlowtierStudio(QMainWindow):
         container = QWidget()
 
         return container
+
+
+class CrossSectionView(QGraphicsView):
+    def __init__(self, app_state: AppState) -> None:
+        super().__init__()
+
+        self.app_state = app_state
 
 
 def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
