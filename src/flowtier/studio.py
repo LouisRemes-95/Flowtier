@@ -4,14 +4,22 @@ from enum import StrEnum
 from pathlib import Path
 from time import perf_counter
 
+import numpy as np
 from PySide6.QtCore import (
     QObject,
     QPoint,
+    QRectF,
     Qt,
     Signal,
 )
+from PySide6.QtGui import (
+    QImage,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QApplication,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
     QGraphicsView,
     QHBoxLayout,
     QMainWindow,
@@ -70,6 +78,8 @@ class FlowtierStudio(QMainWindow):
         self._build_ui()
         self._update_3d_view()
 
+        self.app_state.domain_data_changed.emit()
+
     def _build_ui(self) -> None:
         self.setWindowTitle("Flowtier")
         self.resize(1000, 700)
@@ -88,6 +98,7 @@ class FlowtierStudio(QMainWindow):
 
     def _build_3d_view(self) -> QWidget:
         self._3d_plotter = QtInteractor()
+        self._3d_plotter.setMinimumSize(300, 300)
 
         bounds = self.app_state.domain_data.boundaries
         self._3d_plotter.show_grid(
@@ -116,12 +127,18 @@ class FlowtierStudio(QMainWindow):
 
 
 class CrossSectionSketcher(QGraphicsView):
+    IMAGE_MARGIN = 10
+
     def __init__(self, app_state: AppState) -> None:
         super().__init__()
 
         self.app_state = app_state
 
         self._build_view()
+        self._build_dependencies()
+        self._build_conections()
+
+        self.setMinimumSize(300, 300)
 
     def _build_view(self) -> None:
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -134,6 +151,58 @@ class CrossSectionSketcher(QGraphicsView):
 
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+
+    def _build_dependencies(self) -> None:
+
+        self.scene = QGraphicsScene(self)
+        self.setScene(self.scene)
+
+        self._pixmap_item = QGraphicsPixmapItem()
+        self.scene.addItem(self._pixmap_item)
+
+    def _build_conections(self) -> None:
+        self.app_state.domain_data_changed.connect(self._update_view)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+
+        self._fit_content()
+
+    def _update_view(self) -> None:
+        image = np.ascontiguousarray(self.app_state.domain_data.cross_section.astype(np.uint8) * 255)
+
+        qimage = QImage(
+            image.data, image.shape[1], image.shape[0], image.shape[1], QImage.Format.Format_Grayscale8
+        ).copy()
+
+        self._pixmap_item.setPixmap(QPixmap.fromImage(qimage))
+        self.scene.setSceneRect(self._pixmap_item.boundingRect())
+
+        self._fit_content()
+
+    def _fit_content(self) -> None:
+        cross_section = self.app_state.domain_data.cross_section
+        rows, cols = np.nonzero(cross_section)
+
+        if rows.size == 0:
+            return
+
+        center = np.array(cross_section.shape) // 2
+
+        x_min = min(cols.min(), center[1]) - self.IMAGE_MARGIN
+        x_max = max(cols.max(), center[1]) + self.IMAGE_MARGIN + 1
+
+        y_min = min(rows.min(), center[0]) - self.IMAGE_MARGIN
+        y_max = max(rows.max(), center[0]) + self.IMAGE_MARGIN + 1
+
+        rect = QRectF(
+            float(x_min),
+            float(y_min),
+            float(x_max - x_min),
+            float(y_max - y_min),
+        )
+
+        self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
 
 def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:

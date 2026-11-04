@@ -38,6 +38,10 @@ class DomainData:
     def boundaries(self) -> np.ndarray:
         return self._boundaries
 
+    @property
+    def cross_section(self) -> np.ndarray:
+        return self._cross_section
+
     @cached_property
     def _cross_section_distance_field(self) -> np.ndarray:
         return distance_transform_edt(~self._cross_section).astype(np.float32)
