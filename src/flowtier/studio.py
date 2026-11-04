@@ -59,10 +59,10 @@ class AppConfig:
 
 
 class FlowtierStudio(QMainWindow):
-    def __init__(self, domain_data: DomainData, app_config: AppConfig) -> None:
+    def __init__(self, app_state: AppState, app_config: AppConfig) -> None:
         super().__init__()
 
-        self._domain_data = domain_data
+        self.app_state = app_state
         self._app_config = app_config
 
         self._build_ui()
@@ -79,18 +79,15 @@ class FlowtierStudio(QMainWindow):
         main_layout.setSpacing(10)
 
         left_container = self._build_3d_view()
-        right_container = self._build_cross_section_sketcher()
+        right_container = CrossSectionSketcher(self.app_state)
 
         main_layout.addWidget(left_container, 1)
         main_layout.addWidget(right_container, 1)
 
     def _build_3d_view(self) -> QWidget:
-        container = QWidget()
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
+        self._3d_plotter = QtInteractor()
 
-        self._3d_plotter = QtInteractor(container)
-        bounds = self._domain_data.boundaries
+        bounds = self.app_state.domain_data.boundaries
         self._3d_plotter.show_grid(
             bounds=(0, bounds[1, 0], 0, bounds[1, 1], 0, bounds[1, 2]),
             xtitle="Axis 0",
@@ -98,14 +95,12 @@ class FlowtierStudio(QMainWindow):
             ztitle="Axis 2",
         )
 
-        layout.addWidget(self._3d_plotter.interactor)
-
-        return container
+        return self._3d_plotter
 
     def _update_3d_view(self) -> None:
         start = perf_counter()
 
-        for surface in self._domain_data.plotting_surfaces:
+        for surface in self.app_state.domain_data.plotting_surfaces:
             self._3d_plotter.add_mesh(
                 surface,
                 name="voxel_surface",
@@ -117,13 +112,8 @@ class FlowtierStudio(QMainWindow):
 
         print(f"Surface plotting: {perf_counter() - start:.3f} s")
 
-    def _build_cross_section_sketcher(self) -> QWidget:
-        container = QWidget()
 
-        return container
-
-
-class CrossSectionView(QGraphicsView):
+class CrossSectionSketcher(QGraphicsView):
     def __init__(self, app_state: AppState) -> None:
         super().__init__()
 
@@ -143,7 +133,7 @@ def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
     app.setStyleSheet(STYTE_SHEET)
 
     with Live(Text.from_markup("Opening CTidy Studio..."), console=console, transient=True):
-        window = FlowtierStudio(domain_data, app_config)
+        window = FlowtierStudio(AppState(domain_data), app_config)
         window.show()
         exit_code = app.exec()
 
