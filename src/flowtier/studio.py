@@ -39,7 +39,7 @@ BACKGROUND_COLOR = QColor("#353535")
 
 STYLE_SHEET = f"""
     QGraphicsView {{
-        border: 1px solid {BACKGROUND_COLOR.name()};
+        border: none;
     }}
 
     QMainWindow {{
@@ -112,13 +112,19 @@ class FlowtierStudio(QMainWindow):
         self._3d_plotter = QtInteractor()
         self._3d_plotter.setMinimumSize(300, 300)
 
+        self._3d_plotter.set_background(BACKGROUND_COLOR.name())
+
         bounds = self.app_state.domain_data.boundaries
         self._3d_plotter.show_grid(
             bounds=(0, bounds[1, 0], 0, bounds[1, 1], 0, bounds[1, 2]),
             xtitle="Axis 0",
             ytitle="Axis 1",
             ztitle="Axis 2",
+            color="white",
         )
+
+        self._3d_plotter.reset_camera()
+        self._3d_plotter.camera.zoom(1 / 1.5)
 
         return self._3d_plotter
 
