@@ -282,6 +282,20 @@ class CrossSectionSketcher(QGraphicsView):
     def wheelEvent(self, event) -> None:
         factor = self.ZOOM_FACTOR if event.angleDelta().y() > 0 else 1 / self.ZOOM_FACTOR
 
+        image_rect = self._pixmap_item.boundingRect()
+        viewport_rect = self.viewport().rect()
+
+        min_scale = min(
+            viewport_rect.width() / image_rect.width(),
+            viewport_rect.height() / image_rect.height(),
+        )
+
+        current_scale = self.transform().m11()
+        new_scale = current_scale * factor
+
+        if new_scale < min_scale:
+            factor = min_scale / current_scale
+
         self.scale(factor, factor)
         event.accept()
 
