@@ -4,6 +4,10 @@ from enum import StrEnum
 from pathlib import Path
 from time import perf_counter
 
+from PySide6.QtCore import (
+    QObject,
+    Signal,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -19,6 +23,18 @@ from flowtier.data_handling import DomainData
 
 STYTE_SHEET = """
 """
+
+
+class AppState(QObject):
+    domain_data_changed = Signal()
+
+    def __init__(self, domain_data: DomainData) -> None:
+        super().__init__()
+        self._domain_data = domain_data
+
+    @property
+    def domain_data(self):
+        return self._domain_data
 
 
 class Mode(StrEnum):
