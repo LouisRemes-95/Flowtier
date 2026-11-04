@@ -6,6 +6,8 @@ from time import perf_counter
 
 from PySide6.QtCore import (
     QObject,
+    QPoint,
+    Qt,
     Signal,
 )
 from PySide6.QtWidgets import (
@@ -118,6 +120,20 @@ class CrossSectionSketcher(QGraphicsView):
         super().__init__()
 
         self.app_state = app_state
+
+        self._build_view()
+
+    def _build_view(self) -> None:
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        self._panning = False
+        self._pan_start = QPoint()
+
+        self.setDragMode(QGraphicsView.NoDrag)
+
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
 
 
 def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
