@@ -37,7 +37,14 @@ from flowtier.data_handling import DomainData
 
 BACKGROUND_COLOR = QColor("#353535")
 
-STYTE_SHEET = """
+STYLE_SHEET = f"""
+    QGraphicsView {{
+        border: 1px solid {BACKGROUND_COLOR.name()};
+    }}
+
+    QMainWindow {{
+        background-color: {BACKGROUND_COLOR.name()};
+    }}
 """
 
 
@@ -76,11 +83,6 @@ class AppConfig:
 class FlowtierStudio(QMainWindow):
     def __init__(self, app_state: AppState, app_config: AppConfig) -> None:
         super().__init__()
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #353535;
-            }
-        """)
 
         self.app_state = app_state
         self._app_config = app_config
@@ -153,11 +155,6 @@ class CrossSectionSketcher(QGraphicsView):
         self._build_conections()
 
         self.setMinimumSize(300, 300)
-        self.setStyleSheet("""
-            QGraphicsView {
-                border: 1px solid #353535;
-            }
-        """)
 
     def _build_view(self) -> None:
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -296,7 +293,7 @@ class CrossSectionSketcher(QGraphicsView):
                 viewport_rect.width(),
                 viewport_rect.height(),
             )
-            / 11
+            / self.MIN_VISIBLE_PIXELS
         )
 
         current_scale = self.transform().m11()
@@ -316,7 +313,7 @@ def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
     console.print("[green]✔ Domain data built[/green]")
 
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setStyleSheet(STYTE_SHEET)
+    app.setStyleSheet(STYLE_SHEET)
 
     with Live(Text.from_markup("Opening CTidy Studio..."), console=console, transient=True):
         window = FlowtierStudio(AppState(domain_data), app_config)
