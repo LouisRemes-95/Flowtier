@@ -12,7 +12,7 @@
                 "-clp", "${workspaceFolder}/test/input/filament_center_lines.npz",
                 "-o", "${workspaceFolder}/test/output/",
                 "-n", "segmented_doi_voxelisation",
-                "--precision", "0.005"
+                "--precision", "0.001"
             ]
         }
     ]

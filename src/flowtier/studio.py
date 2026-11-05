@@ -2,7 +2,6 @@ import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from time import perf_counter
 from typing import Final
 
 import numpy as np
@@ -136,8 +135,6 @@ class FlowtierStudio(QMainWindow):
         return self._3d_plotter
 
     def _update_3d_view(self) -> None:
-        start = perf_counter()
-
         for surface in self.app_state.domain_data.plotting_surfaces:
             self._3d_plotter.add_mesh(
                 surface,
@@ -147,8 +144,6 @@ class FlowtierStudio(QMainWindow):
                 show_edges=False,
                 smooth_shading=False,
             )
-
-        print(f"Surface plotting: {perf_counter() - start:.3f} s")
 
 
 class CrossSectionSketcher(QGraphicsView):
@@ -187,13 +182,19 @@ class CrossSectionSketcher(QGraphicsView):
 
         self._pixmap_item = QGraphicsPixmapItem()
         self.scene.addItem(self._pixmap_item)
+        self.scene.setSceneRect(0, 0, *self.app_state.domain_data.cross_section.shape)
+
+    def _build_conections(self) -> None:
+        self.app_state.domain_data_changed.connect(self._update_view)
+        pass
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+
+        self._fit_content()
 
     @staticmethod
-    def _build_rounded_image(
-        binary: np.ndarray,
-        resolution: int = 8,
-    ) -> np.ndarray:
-        # Create a small rounded-square opacity mask
+    def _build_rounded_image(binary: np.ndarray, resolution: int) -> np.ndarray:
         y, x = np.mgrid[:resolution, :resolution]
 
         center = resolution / 2
@@ -249,24 +250,58 @@ class CrossSectionSketcher(QGraphicsView):
             4,
         )
 
-    def _build_conections(self) -> None:
-        self.app_state.domain_data_changed.connect(self._update_view)
-        pass
+    @staticmethod
+    def _get_render_resolution(zoom: float) -> int:
+        return min(256, 2.0 ** np.ceil(np.log2(max(zoom, 1e-6))))
 
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
+    def _get_visible_binary(self) -> tuple[np.ndarray, int, int]:
+        rect = self.mapToScene(self.viewport().rect()).boundingRect()
+        nx, ny = self.app_state.domain_data.cross_section.shape
 
-        self._fit_content()
+        x0 = max(0, int(np.floor(rect.left())))
+        x1 = min(nx, int(np.ceil(rect.right())))
+
+        y0 = max(0, int(np.floor(rect.top())))
+        y1 = min(ny, int(np.ceil(rect.bottom())))
+
+        cross_section = self.app_state.domain_data.cross_section
+        ny = cross_section.shape[1]
+
+        binary = cross_section[x0:x1, ny - y1 : ny - y0]
+        binary = np.ascontiguousarray(np.flipud(binary.T))
+
+        return binary, x0, y0
 
     def _update_view(self) -> None:
-        cross_section = self.app_state.domain_data.cross_section
+        binary, x0, y0 = self._get_visible_binary()
 
-        binary = np.flipud(cross_section.T)
+        if binary.size == 0:
+            self._pixmap_item.setPixmap(QPixmap())
+            return
 
-        rgba = self._build_rounded_image(
-            binary,
-            resolution=self.PIXEL_RESOLUTION,
-        )
+        zoom = self.transform().m11() * self.devicePixelRatioF()
+        resolution = self._get_render_resolution(zoom)
+
+        if resolution < 1:
+            factor = int(round(1 / resolution))
+
+            # Align sampling to the global voxel grid
+            offset_x = (-x0) % factor
+            offset_y = (-y0) % factor
+
+            binary = binary[offset_y::factor, offset_x::factor]
+
+            x0 += offset_x
+            y0 += offset_y
+
+        if resolution <= 16:
+            rgba = np.empty((*binary.shape, 4), dtype=np.uint8)
+            rgba[binary] = (*TRUE_COLOR.getRgb()[:3], 255)
+            rgba[~binary] = (*FALSE_COLOR.getRgb()[:3], 255)
+
+            resolution = min(resolution, 1)
+        else:
+            rgba = self._build_rounded_image(binary, int(resolution))
 
         height, width = rgba.shape[:2]
 
@@ -279,14 +314,8 @@ class CrossSectionSketcher(QGraphicsView):
         ).copy()
 
         self._pixmap_item.setPixmap(QPixmap.fromImage(qimage))
-        self._pixmap_item.setScale(1 / self.PIXEL_RESOLUTION)
-
-        self.scene.setSceneRect(
-            0,
-            0,
-            cross_section.shape[0],
-            cross_section.shape[1],
-        )
+        self._pixmap_item.setScale(1 / resolution)
+        self._pixmap_item.setPos(x0, y0)
 
     def _fit_content(self) -> None:
         cross_section = self.app_state.domain_data.cross_section
@@ -312,6 +341,7 @@ class CrossSectionSketcher(QGraphicsView):
         )
 
         self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+        self._update_view()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.RightButton:
@@ -329,6 +359,7 @@ class CrossSectionSketcher(QGraphicsView):
 
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+            self._update_view()
 
             event.accept()
             self.viewport().update()
@@ -367,6 +398,7 @@ class CrossSectionSketcher(QGraphicsView):
         new_scale = np.clip(current_scale * factor, min_scale, max_scale)
 
         self.scale(new_scale / current_scale, new_scale / current_scale)
+        self._update_view()
         event.accept()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
