@@ -182,7 +182,7 @@ class CrossSectionSketcher(QGraphicsView):
 
         self._pixmap_item = QGraphicsPixmapItem()
         self.scene.addItem(self._pixmap_item)
-        self.scene.setSceneRect(0, 0, *self.app_state.domain_data.cross_section.shape)
+        self.scene.setSceneRect(self._navigation_rect)
 
     def _build_conections(self) -> None:
         self.app_state.domain_data_changed.connect(self._update_view)
@@ -192,6 +192,23 @@ class CrossSectionSketcher(QGraphicsView):
         super().showEvent(event)
 
         self._fit_content()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+
+        rect = self._navigation_rect
+        viewport = self.viewport().rect()
+
+        min_scale = min(viewport.width() / rect.width(), viewport.height() / rect.height())
+
+        current_scale = self.transform().m11()
+
+        if current_scale < min_scale:
+            factor = min_scale / current_scale
+            self.scale(factor, factor)
+
+        self._constrain_pan()
+        self._update_view()
 
     @staticmethod
     def _build_rounded_image(binary: np.ndarray, resolution: int) -> np.ndarray:
@@ -317,31 +334,65 @@ class CrossSectionSketcher(QGraphicsView):
         self._pixmap_item.setScale(1 / resolution)
         self._pixmap_item.setPos(x0, y0)
 
-    def _fit_content(self) -> None:
-        cross_section = self.app_state.domain_data.cross_section
-        i, j = np.nonzero(cross_section)
-
-        if i.size == 0:
-            return
+    @property
+    def _content_rect(self) -> QRectF:
+        cross_section = self.app_state.domain_data.cross_section.copy()
 
         shape = cross_section.shape
-        center = np.array(shape) // 2
+        cross_section[shape[0] // 2, shape[1] // 2] = True
 
-        x_min = min(i.min(), center[0]) - self.IMAGE_MARGIN
-        x_max = max(i.max(), center[0]) + self.IMAGE_MARGIN + 1
+        i, j = np.nonzero(cross_section)
 
-        y_min = shape[1] - 1 - max(j.max(), center[1]) - self.IMAGE_MARGIN
-        y_max = shape[1] - 1 - min(j.min(), center[1]) + self.IMAGE_MARGIN + 1
+        x_min = i.min() - self.IMAGE_MARGIN
+        x_max = i.max() + self.IMAGE_MARGIN + 1
 
-        rect = QRectF(
-            float(x_min),
-            float(y_min),
-            float(x_max - x_min),
-            float(y_max - y_min),
+        y_min = shape[1] - 1 - j.max() - self.IMAGE_MARGIN
+        y_max = shape[1] - 1 - j.min() + self.IMAGE_MARGIN + 1
+
+        return QRectF(float(x_min), float(y_min), float(x_max - x_min), float(y_max - y_min))
+
+    def _fit_content(self) -> None:
+        self.fitInView(self._content_rect, Qt.AspectRatioMode.KeepAspectRatio)
+        self._update_view()
+
+    @property
+    def _navigation_rect(self) -> QRectF:
+        rect = self._content_rect
+
+        return QRectF(
+            rect.center().x() - rect.width(),
+            rect.center().y() - rect.height(),
+            rect.width() * 2,
+            rect.height() * 2,
         )
 
-        self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
-        self._update_view()
+    def _constrain_pan(self) -> None:
+        visible = self.mapToScene(self.viewport().rect()).boundingRect()
+        bounds = self._navigation_rect
+
+        center = visible.center()
+
+        x = (
+            bounds.center().x()
+            if visible.width() >= bounds.width()
+            else np.clip(
+                center.x(),
+                bounds.left() + visible.width() / 2,
+                bounds.right() - visible.width() / 2,
+            )
+        )
+
+        y = (
+            bounds.center().y()
+            if visible.height() >= bounds.height()
+            else np.clip(
+                center.y(),
+                bounds.top() + visible.height() / 2,
+                bounds.bottom() - visible.height() / 2,
+            )
+        )
+
+        self.centerOn(float(x), float(y))
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.RightButton:
@@ -359,6 +410,7 @@ class CrossSectionSketcher(QGraphicsView):
 
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - delta.x())
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
+            self._constrain_pan()
             self._update_view()
 
             event.accept()
@@ -378,7 +430,7 @@ class CrossSectionSketcher(QGraphicsView):
     def wheelEvent(self, event: QMouseEvent) -> None:
         factor = self.ZOOM_FACTOR if event.angleDelta().y() > 0 else 1 / self.ZOOM_FACTOR
 
-        image_rect = self.scene.sceneRect()
+        image_rect = self._navigation_rect
         viewport_rect = self.viewport().rect()
 
         min_scale = min(
@@ -398,6 +450,7 @@ class CrossSectionSketcher(QGraphicsView):
         new_scale = np.clip(current_scale * factor, min_scale, max_scale)
 
         self.scale(new_scale / current_scale, new_scale / current_scale)
+        self._constrain_pan()
         self._update_view()
         event.accept()
 
