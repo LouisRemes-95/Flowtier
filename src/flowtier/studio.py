@@ -17,6 +17,7 @@ from PySide6.QtGui import (
     QColor,
     QImage,
     QMouseEvent,
+    QPainter,
     QPixmap,
     QTransform,
 )
@@ -181,11 +182,8 @@ class CrossSectionSketcher(QGraphicsView):
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
 
-        self._black_pixmap = QPixmap(1, 1)
-        self._black_pixmap.fill(Qt.GlobalColor.black)
-
-        self._white_pixmap = QPixmap(1, 1)
-        self._white_pixmap.fill(Qt.GlobalColor.white)
+        self._black_pixmap = self._create_pixel_pixmap(QColor("black"))
+        self._white_pixmap = self._create_pixel_pixmap(QColor("white"))
 
         self._build_pixel_items()
 
@@ -193,6 +191,38 @@ class CrossSectionSketcher(QGraphicsView):
         # self.scene.addItem(self._pixmap_item)
 
         # self.scene.addItem(self._grid_overlay())
+
+    @staticmethod
+    def _create_pixel_pixmap(color: QColor) -> QPixmap:
+        resolution = 128
+        margin = 8
+        radius = 12
+
+        pixmap = QPixmap(resolution, resolution)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+
+        painter.drawRoundedRect(
+            QRectF(
+                margin,
+                margin,
+                resolution - 2 * margin,
+                resolution - 2 * margin,
+            ),
+            radius,
+            radius,
+        )
+
+        painter.end()
+
+        pixmap.setDevicePixelRatio(resolution)
+
+        return pixmap
 
     def _build_pixel_items(self) -> None:
         cross_section_shape = self.app_state.domain_data.cross_section.shape
