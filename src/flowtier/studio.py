@@ -16,6 +16,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QColor,
     QImage,
+    QMouseEvent,
     QPixmap,
     QTransform,
 )
@@ -252,7 +253,7 @@ class CrossSectionSketcher(QGraphicsView):
 
         return grid_overlay
 
-    def mousePressEvent(self, event) -> None:
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.RightButton:
             self._panning = True
             self._pan_start = event.pos()
@@ -261,7 +262,7 @@ class CrossSectionSketcher(QGraphicsView):
 
         super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event) -> None:
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._panning:
             delta = event.pos() - self._pan_start
             self._pan_start = event.pos()
@@ -275,7 +276,7 @@ class CrossSectionSketcher(QGraphicsView):
 
         super().mouseMoveEvent(event)
 
-    def mouseReleaseEvent(self, event) -> None:
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.RightButton:
             self._panning = False
             event.accept()
@@ -283,7 +284,7 @@ class CrossSectionSketcher(QGraphicsView):
 
         super().mouseReleaseEvent(event)
 
-    def wheelEvent(self, event) -> None:
+    def wheelEvent(self, event: QMouseEvent) -> None:
         factor = self.ZOOM_FACTOR if event.angleDelta().y() > 0 else 1 / self.ZOOM_FACTOR
 
         image_rect = self._pixmap_item.boundingRect()
@@ -307,6 +308,14 @@ class CrossSectionSketcher(QGraphicsView):
 
         self.scale(new_scale / current_scale, new_scale / current_scale)
         event.accept()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.RightButton:
+            self._fit_content()
+            event.accept()
+            return
+
+        super().mouseDoubleClickEvent(event)
 
 
 def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
