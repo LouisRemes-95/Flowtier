@@ -178,17 +178,45 @@ class CrossSectionSketcher(QGraphicsView):
         self.setBackgroundBrush(BACKGROUND_COLOR)
 
     def _build_dependencies(self) -> None:
-
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
 
-        self._pixmap_item = QGraphicsPixmapItem()
-        self.scene.addItem(self._pixmap_item)
+        self._black_pixmap = QPixmap(1, 1)
+        self._black_pixmap.fill(Qt.GlobalColor.black)
 
-        self.scene.addItem(self._grid_overlay())
+        self._white_pixmap = QPixmap(1, 1)
+        self._white_pixmap.fill(Qt.GlobalColor.white)
+
+        self._build_pixel_items()
+
+        # self._pixmap_item = QGraphicsPixmapItem()
+        # self.scene.addItem(self._pixmap_item)
+
+        # self.scene.addItem(self._grid_overlay())
+
+    def _build_pixel_items(self) -> None:
+        cross_section_shape = self.app_state.domain_data.cross_section.shape
+
+        self._pixel_items = []
+
+        for i in range(cross_section_shape[0]):
+            pixel_row = []
+
+            for j in range(cross_section_shape[1]):
+                item = QGraphicsPixmapItem(self._black_pixmap)
+                item.setPos(i, cross_section_shape[1] - 1 - j)
+                item.setTransformOriginPoint(0.5, 0.5)
+
+                self.scene.addItem(item)
+                pixel_row.append(item)
+
+            self._pixel_items.append(pixel_row)
+
+        self.scene.setSceneRect(0, 0, cross_section_shape[0], cross_section_shape[1])
 
     def _build_conections(self) -> None:
         self.app_state.domain_data_changed.connect(self._update_view)
+        pass
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -196,31 +224,27 @@ class CrossSectionSketcher(QGraphicsView):
         self._fit_content()
 
     def _update_view(self) -> None:
-        image = np.ascontiguousarray(self.app_state.domain_data.cross_section.astype(np.uint8) * 255)
+        cross_section = self.app_state.domain_data.cross_section
 
-        qimage = QImage(
-            image.data, image.shape[1], image.shape[0], image.shape[1], QImage.Format.Format_Grayscale8
-        ).copy()
-
-        self._pixmap_item.setPixmap(QPixmap.fromImage(qimage))
-        self.scene.setSceneRect(self._pixmap_item.boundingRect())
-
-        self._fit_content()
+        for i, j in np.ndindex(cross_section.shape):
+            pixmap = self._white_pixmap if cross_section[i, j] else self._black_pixmap
+            self._pixel_items[i][j].setPixmap(pixmap)
 
     def _fit_content(self) -> None:
         cross_section = self.app_state.domain_data.cross_section
-        rows, cols = np.nonzero(cross_section)
+        i, j = np.nonzero(cross_section)
 
-        if rows.size == 0:
+        if i.size == 0:
             return
 
-        center = np.array(cross_section.shape) // 2
+        shape = cross_section.shape
+        center = np.array(shape) // 2
 
-        x_min = min(cols.min(), center[1]) - self.IMAGE_MARGIN + 1
-        x_max = max(cols.max(), center[1]) + self.IMAGE_MARGIN + 1
+        x_min = min(i.min(), center[0]) - self.IMAGE_MARGIN
+        x_max = max(i.max(), center[0]) + self.IMAGE_MARGIN + 1
 
-        y_min = min(rows.min(), center[0]) - self.IMAGE_MARGIN + 1
-        y_max = max(rows.max(), center[0]) + self.IMAGE_MARGIN + 1
+        y_min = shape[1] - 1 - max(j.max(), center[1]) - self.IMAGE_MARGIN
+        y_max = shape[1] - 1 - min(j.min(), center[1]) + self.IMAGE_MARGIN + 1
 
         rect = QRectF(
             float(x_min),
@@ -287,7 +311,7 @@ class CrossSectionSketcher(QGraphicsView):
     def wheelEvent(self, event: QMouseEvent) -> None:
         factor = self.ZOOM_FACTOR if event.angleDelta().y() > 0 else 1 / self.ZOOM_FACTOR
 
-        image_rect = self._pixmap_item.boundingRect()
+        image_rect = self.scene.sceneRect()
         viewport_rect = self.viewport().rect()
 
         min_scale = min(
