@@ -1,13 +1,14 @@
 from functools import cached_property
 from pathlib import Path
 
+import edt
 import igl
 import numpy as np
 import trimesh
 from numba import njit, prange
 from pyvista import PolyData
 from rich.progress import BarColumn, Progress, TextColumn
-from scipy.ndimage import binary_dilation, binary_propagation, distance_transform_edt
+from scipy.ndimage import binary_dilation, binary_propagation
 
 from flowtier.common import UserError, console
 
@@ -44,7 +45,7 @@ class DomainData:
 
     @cached_property
     def _cross_section_distance_field(self) -> np.ndarray:
-        return distance_transform_edt(~self._cross_section).astype(np.float32)
+        return edt.edt(~self._cross_section, parallel=4, black_border=False)
 
     @property
     def plotting_surfaces(self) -> list[PolyData]:
@@ -215,10 +216,12 @@ class DomainData:
             binary_voids = binary_propagation(self.void_distance_field < 0, mask=~binary_interface, structure=structure)
 
         with console.status("Computing the rest of the void distance field..."):
-            void_sdf = distance_transform_edt(~binary_interface).astype(np.float32) * self._precision
+            void_sdf = edt.edt(~binary_interface, anisotropy=(self._precision,) * 3, parallel=4, black_border=False)
 
-            void_sdf[binary_voids == 1] = -void_sdf[binary_voids == 1]
-            self.void_distance_field[np.isnan(self.void_distance_field)] = void_sdf[np.isnan(self.void_distance_field)]
+            void_sdf[binary_voids] *= -1
+
+            mask = np.isnan(self.void_distance_field)
+            self.void_distance_field[mask] = void_sdf[mask]
 
     def _build_center_lines_dependencies(self, center_lines_path: Path) -> None:
         with np.load(center_lines_path) as data:

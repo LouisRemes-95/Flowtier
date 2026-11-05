@@ -17,9 +17,7 @@ from PySide6.QtGui import (
     QColor,
     QImage,
     QMouseEvent,
-    QPainter,
     QPixmap,
-    QTransform,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -37,11 +35,18 @@ from rich.text import Text
 from flowtier.common import console
 from flowtier.data_handling import DomainData
 
-BACKGROUND_COLOR = QColor("#353535")
+BACKGROUND_COLOR = QColor("#383838")
+VIEW_COLOR = QColor("#2b2b2b")
+BORDER_COLOR = QColor("#2b2b2b")
+FALSE_COLOR = QColor("#4a6fa5")
+TRUE_COLOR = QColor("#a3eaff")
+
 
 STYLE_SHEET = f"""
     QGraphicsView {{
-        border: none;
+        border: 2px solid {BORDER_COLOR.name()};
+        border-radius: 3px;
+        background-color: {VIEW_COLOR.name()};
     }}
 
     QMainWindow {{
@@ -148,7 +153,7 @@ class FlowtierStudio(QMainWindow):
 
 class CrossSectionSketcher(QGraphicsView):
     IMAGE_MARGIN: Final = 10
-    GRID_RESOLUTION: Final = 8
+    PIXEL_RESOLUTION: Final = 32
     MIN_VISIBLE_PIXELS: Final = 11
 
     ZOOM_FACTOR: Final = 1.15
@@ -176,73 +181,73 @@ class CrossSectionSketcher(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
 
-        self.setBackgroundBrush(BACKGROUND_COLOR)
-
     def _build_dependencies(self) -> None:
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
 
-        self._black_pixmap = self._create_pixel_pixmap(QColor("black"))
-        self._white_pixmap = self._create_pixel_pixmap(QColor("white"))
-
-        self._build_pixel_items()
-
-        # self._pixmap_item = QGraphicsPixmapItem()
-        # self.scene.addItem(self._pixmap_item)
-
-        # self.scene.addItem(self._grid_overlay())
+        self._pixmap_item = QGraphicsPixmapItem()
+        self.scene.addItem(self._pixmap_item)
 
     @staticmethod
-    def _create_pixel_pixmap(color: QColor) -> QPixmap:
-        resolution = 128
-        margin = 8
-        radius = 12
+    def _build_rounded_image(
+        binary: np.ndarray,
+        resolution: int = 8,
+    ) -> np.ndarray:
+        # Create a small rounded-square opacity mask
+        y, x = np.mgrid[:resolution, :resolution]
 
-        pixmap = QPixmap(resolution, resolution)
-        pixmap.fill(Qt.GlobalColor.transparent)
+        center = resolution / 2
+        half_size = resolution * 0.44
+        radius = resolution * 0.12
 
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        dx = np.maximum(np.abs(x + 0.5 - center) - (half_size - radius), 0)
+        dy = np.maximum(np.abs(y + 0.5 - center) - (half_size - radius), 0)
 
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(color)
+        distance = np.sqrt(dx**2 + dy**2)
+        alpha = np.clip(radius + 0.5 - distance, 0, 1)
 
-        painter.drawRoundedRect(
-            QRectF(
-                margin,
-                margin,
-                resolution - 2 * margin,
-                resolution - 2 * margin,
-            ),
-            radius,
-            radius,
+        # Use configured colours for False and True
+        false_color = np.array(
+            [
+                FALSE_COLOR.red(),
+                FALSE_COLOR.green(),
+                FALSE_COLOR.blue(),
+            ],
+            dtype=np.uint8,
         )
 
-        painter.end()
+        true_color = np.array(
+            [
+                TRUE_COLOR.red(),
+                TRUE_COLOR.green(),
+                TRUE_COLOR.blue(),
+            ],
+            dtype=np.uint8,
+        )
 
-        pixmap.setDevicePixelRatio(resolution)
+        colors = np.where(binary[..., None], true_color, false_color)
 
-        return pixmap
+        # Combine pixels and rounded-square template
+        rgba = np.empty(
+            (
+                binary.shape[0],
+                binary.shape[1],
+                resolution,
+                resolution,
+                4,
+            ),
+            dtype=np.uint8,
+        )
 
-    def _build_pixel_items(self) -> None:
-        cross_section_shape = self.app_state.domain_data.cross_section.shape
+        rgba[..., :3] = colors[:, :, None, None, :]
+        rgba[..., 3] = (alpha * 255).astype(np.uint8)
 
-        self._pixel_items = []
-
-        for i in range(cross_section_shape[0]):
-            pixel_row = []
-
-            for j in range(cross_section_shape[1]):
-                item = QGraphicsPixmapItem(self._black_pixmap)
-                item.setPos(i, cross_section_shape[1] - 1 - j)
-                item.setTransformOriginPoint(0.5, 0.5)
-
-                self.scene.addItem(item)
-                pixel_row.append(item)
-
-            self._pixel_items.append(pixel_row)
-
-        self.scene.setSceneRect(0, 0, cross_section_shape[0], cross_section_shape[1])
+        # Reorder into a standard image
+        return rgba.transpose(0, 2, 1, 3, 4).reshape(
+            binary.shape[0] * resolution,
+            binary.shape[1] * resolution,
+            4,
+        )
 
     def _build_conections(self) -> None:
         self.app_state.domain_data_changed.connect(self._update_view)
@@ -256,9 +261,32 @@ class CrossSectionSketcher(QGraphicsView):
     def _update_view(self) -> None:
         cross_section = self.app_state.domain_data.cross_section
 
-        for i, j in np.ndindex(cross_section.shape):
-            pixmap = self._white_pixmap if cross_section[i, j] else self._black_pixmap
-            self._pixel_items[i][j].setPixmap(pixmap)
+        binary = np.flipud(cross_section.T)
+
+        rgba = self._build_rounded_image(
+            binary,
+            resolution=self.PIXEL_RESOLUTION,
+        )
+
+        height, width = rgba.shape[:2]
+
+        qimage = QImage(
+            rgba.data,
+            width,
+            height,
+            4 * width,
+            QImage.Format.Format_RGBA8888,
+        ).copy()
+
+        self._pixmap_item.setPixmap(QPixmap.fromImage(qimage))
+        self._pixmap_item.setScale(1 / self.PIXEL_RESOLUTION)
+
+        self.scene.setSceneRect(
+            0,
+            0,
+            cross_section.shape[0],
+            cross_section.shape[1],
+        )
 
     def _fit_content(self) -> None:
         cross_section = self.app_state.domain_data.cross_section
@@ -284,28 +312,6 @@ class CrossSectionSketcher(QGraphicsView):
         )
 
         self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
-
-    def _grid_overlay(self) -> QGraphicsPixmapItem:
-        grid_overlay = QGraphicsPixmapItem()
-        grid_overlay.setZValue(1)
-
-        cross_section_shape = np.array(self.app_state.domain_data.cross_section.shape)
-        overlay_shape = cross_section_shape * self.GRID_RESOLUTION + 1
-
-        overlay = np.zeros(overlay_shape, dtype=bool)
-        overlay[:: self.GRID_RESOLUTION, :] = True
-        overlay[:, :: self.GRID_RESOLUTION] = True
-
-        rgba = np.zeros((*overlay.shape, 4), dtype=np.uint8)
-        rgba[overlay] = [53, 53, 53, 255]  # Opaque blue; False remains transparent
-
-        height, width = overlay.shape
-        image = QImage(rgba.data, width, height, 4 * width, QImage.Format.Format_RGBA8888)
-
-        grid_overlay.setPixmap(QPixmap.fromImage(image.copy()))
-        grid_overlay.setTransform(QTransform.fromScale(*tuple(cross_section_shape / overlay_shape)))
-
-        return grid_overlay
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.RightButton:
