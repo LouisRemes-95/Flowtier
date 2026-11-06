@@ -176,6 +176,10 @@ class CrossSectionSketcher(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
 
+        self._painting = False
+        self._paint_value = True
+        self._last_voxel = None
+
     def _build_dependencies(self) -> None:
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
@@ -394,7 +398,50 @@ class CrossSectionSketcher(QGraphicsView):
 
         self.centerOn(float(x), float(y))
 
+    def _mouse_to_voxel(self, pos: QPoint) -> tuple[int, int] | None:
+        point = self.mapToScene(pos)
+        nx, ny = self.app_state.domain_data.cross_section.shape
+
+        i = int(np.floor(point.x()))
+        j = ny - 1 - int(np.floor(point.y()))
+
+        if 0 <= i < nx and 0 <= j < ny:
+            return i, j
+
+        return None
+
+    def _paint_to(self, pos: QPoint) -> None:
+        voxel = self._mouse_to_voxel(pos)
+
+        if voxel is None:
+            return
+
+        start = self._last_voxel or voxel
+        end = voxel
+
+        steps = max(abs(end[0] - start[0]), abs(end[1] - start[1])) + 1
+
+        i = np.rint(np.linspace(start[0], end[0], steps)).astype(int)
+        j = np.rint(np.linspace(start[1], end[1], steps)).astype(int)
+
+        self.app_state.domain_data.cross_section[i, j] = self._paint_value
+        self._last_voxel = end
+
+        self._update_view()
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton:
+            voxel = self._mouse_to_voxel(event.pos())
+
+            if voxel is not None:
+                self._painting = True
+                self._paint_value = not bool(self.app_state.domain_data.cross_section[voxel])
+                self._last_voxel = None
+                self._paint_to(event.pos())
+
+            event.accept()
+            return
+
         if event.button() == Qt.RightButton:
             self._panning = True
             self._pan_start = event.pos()
@@ -404,6 +451,11 @@ class CrossSectionSketcher(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._painting:
+            self._paint_to(event.pos())
+            event.accept()
+            return
+
         if self._panning:
             delta = event.pos() - self._pan_start
             self._pan_start = event.pos()
@@ -420,6 +472,12 @@ class CrossSectionSketcher(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton:
+            self._painting = False
+            self._last_voxel = None
+            event.accept()
+            return
+
         if event.button() == Qt.RightButton:
             self._panning = False
             event.accept()
