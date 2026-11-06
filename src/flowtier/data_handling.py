@@ -380,6 +380,15 @@ class DomainData:
 
         return PolyData(vertices, faces.ravel())
 
+    def paint_cross_section(self, i: np.ndarray, j: np.ndarray, value: bool) -> bool:
+        cross_section = self.cross_section
+
+        if np.all(cross_section[i, j] == value):
+            return False
+
+        cross_section[i, j] = value
+        return True
+
 
 @njit(inline="always")
 def _bilinear_interpolate(distance_field: np.ndarray, u: float, v: float) -> float:

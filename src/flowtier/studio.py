@@ -65,6 +65,10 @@ class AppState(QObject):
     def domain_data(self):
         return self._domain_data
 
+    def paint_cross_section(self, i: np.ndarray, j: np.ndarray, value: bool) -> None:
+        if self._domain_data.paint_cross_section(i, j, value):
+            self.domain_data_changed.emit()
+
 
 class Mode(StrEnum):
     RESET = "reset"
@@ -424,10 +428,8 @@ class CrossSectionSketcher(QGraphicsView):
         i = np.rint(np.linspace(start[0], end[0], steps)).astype(int)
         j = np.rint(np.linspace(start[1], end[1], steps)).astype(int)
 
-        self.app_state.domain_data.cross_section[i, j] = self._paint_value
+        self.app_state.paint_cross_section(i, j, self._paint_value)
         self._last_voxel = end
-
-        self._update_view()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.LeftButton:
