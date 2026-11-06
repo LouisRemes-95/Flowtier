@@ -387,6 +387,8 @@ class DomainData:
             return False
 
         cross_section[i, j] = value
+
+        self.__dict__.pop("_cross_section_distance_field", None)
         return True
 
 

@@ -100,8 +100,6 @@ class FlowtierStudio(QMainWindow):
         self._build_ui()
         self._update_3d_view()
 
-        self.app_state.domain_data_changed.emit()
-
     def _build_ui(self) -> None:
         self.setWindowTitle("Flowtier")
         self.resize(1000, 700)
@@ -168,6 +166,8 @@ class CrossSectionSketcher(QGraphicsView):
 
         self.setMinimumSize(300, 300)
 
+        self._on_domain_data_changed()
+
     def _build_view(self) -> None:
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -190,19 +190,26 @@ class CrossSectionSketcher(QGraphicsView):
 
         self._pixmap_item = QGraphicsPixmapItem()
         self.scene.addItem(self._pixmap_item)
-        self.scene.setSceneRect(self._navigation_rect)
 
     def _build_conections(self) -> None:
-        self.app_state.domain_data_changed.connect(self._update_view)
-        pass
+        self.app_state.domain_data_changed.connect(self._on_domain_data_changed)
+
+    def _on_domain_data_changed(self) -> None:
+        self.scene.setSceneRect(self._navigation_rect)
+        self._update_view()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
 
-        self._fit_content()
+        if not getattr(self, "_initial_fit_done", False):
+            self._fit_content()
+            self._initial_fit_done = True
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+
+        if not hasattr(self, "_pixmap_item"):
+            return
 
         rect = self._navigation_rect
         viewport = self.viewport().rect()
@@ -212,8 +219,7 @@ class CrossSectionSketcher(QGraphicsView):
         current_scale = self.transform().m11()
 
         if current_scale < min_scale:
-            factor = min_scale / current_scale
-            self.scale(factor, factor)
+            self.scale(min_scale / current_scale, min_scale / current_scale)
 
         self._constrain_pan()
         self._update_view()
@@ -535,7 +541,7 @@ def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setStyleSheet(STYLE_SHEET)
 
-    with Live(Text.from_markup("Opening CTidy Studio..."), console=console, transient=True):
+    with Live(Text.from_markup("Opening Flowtier Studio..."), console=console, transient=True):
         window = FlowtierStudio(AppState(domain_data), app_config)
         window.show()
         exit_code = app.exec()
