@@ -321,9 +321,6 @@ class DomainData:
 
         self._cross_section = np.zeros(shape, dtype=bool)
         self._cross_section[n + 1, n + 1] = True
-        self._cross_section[n + 2, n + 1] = True
-        self._cross_section[n + 2, n + 2] = True
-        self._cross_section[n + 4, n + 1] = True
 
     def _update_center_lines_distance_field(self, chunk_size: int = 1_000_000) -> None:
         shape = tuple(self._grid_shape)

@@ -13,13 +13,17 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
+    QBrush,
     QColor,
     QImage,
     QMouseEvent,
+    QPainterPath,
+    QPen,
     QPixmap,
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QGraphicsPathItem,
     QGraphicsPixmapItem,
     QGraphicsScene,
     QGraphicsView,
@@ -191,6 +195,8 @@ class CrossSectionSketcher(QGraphicsView):
         self._pixmap_item = QGraphicsPixmapItem()
         self.scene.addItem(self._pixmap_item)
 
+        self._build_center_marker()
+
     def _build_conections(self) -> None:
         self.app_state.domain_data_changed.connect(self._on_domain_data_changed)
 
@@ -347,6 +353,24 @@ class CrossSectionSketcher(QGraphicsView):
         self._pixmap_item.setPixmap(QPixmap.fromImage(qimage))
         self._pixmap_item.setScale(1 / resolution)
         self._pixmap_item.setPos(x0, y0)
+
+    def _build_center_marker(self) -> None:
+        nx, ny = self.app_state.domain_data.cross_section.shape
+
+        size = 0.3
+        center_i = nx / 2
+        center_j = ny / 2
+
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(-size / 2, -size / 2, size, size), 0.08, 0.08)
+
+        self._center_marker = QGraphicsPathItem(path)
+        self._center_marker.setBrush(QBrush(QColor("#ff5555")))
+        self._center_marker.setPen(QPen(Qt.NoPen))
+        self._center_marker.setPos(center_i, ny - center_j)
+        self._center_marker.setZValue(10)
+
+        self.scene.addItem(self._center_marker)
 
     @property
     def _content_rect(self) -> QRectF:
