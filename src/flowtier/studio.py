@@ -373,6 +373,11 @@ class CrossSectionSketcher(QGraphicsView):
         self.scene.addItem(self._center_marker)
 
     @property
+    def _image_rect(self) -> QRectF:
+        nx, ny = self.app_state.domain_data.cross_section.shape
+        return QRectF(0, 0, nx, ny)
+
+    @property
     def _content_rect(self) -> QRectF:
         cross_section = self.app_state.domain_data.cross_section.copy()
 
@@ -387,10 +392,19 @@ class CrossSectionSketcher(QGraphicsView):
         y_min = shape[1] - 1 - j.max() - self.IMAGE_MARGIN
         y_max = shape[1] - 1 - j.min() + self.IMAGE_MARGIN + 1
 
-        return QRectF(float(x_min), float(y_min), float(x_max - x_min), float(y_max - y_min))
+        return QRectF(float(x_min), float(y_min), float(x_max - x_min), float(y_max - y_min)).intersected(
+            self._image_rect
+        )
 
     def _fit_content(self) -> None:
-        self.fitInView(self._content_rect, Qt.AspectRatioMode.KeepAspectRatio)
+        rect = self._content_rect
+        viewport = self.viewport().rect()
+
+        scale = min(viewport.width() / rect.width(), viewport.height() / rect.height())
+
+        self.resetTransform()
+        self.scale(scale, scale)
+        self.centerOn(rect.center())
         self._update_view()
 
     @property
@@ -398,11 +412,8 @@ class CrossSectionSketcher(QGraphicsView):
         rect = self._content_rect
 
         return QRectF(
-            rect.center().x() - rect.width(),
-            rect.center().y() - rect.height(),
-            rect.width() * 2,
-            rect.height() * 2,
-        )
+            rect.center().x() - rect.width(), rect.center().y() - rect.height(), rect.width() * 2, rect.height() * 2
+        ).intersected(self._image_rect)
 
     def _constrain_pan(self) -> None:
         visible = self.mapToScene(self.viewport().rect()).boundingRect()
