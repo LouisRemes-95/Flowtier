@@ -192,6 +192,8 @@ class CrossSectionSketcher(QGraphicsView):
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
 
+        self.scene.setSceneRect(self._image_rect)
+
         self._pixmap_item = QGraphicsPixmapItem()
         self.scene.addItem(self._pixmap_item)
 
@@ -201,7 +203,7 @@ class CrossSectionSketcher(QGraphicsView):
         self.app_state.domain_data_changed.connect(self._on_domain_data_changed)
 
     def _on_domain_data_changed(self) -> None:
-        self.scene.setSceneRect(self._navigation_rect)
+
         self._update_view()
 
     def showEvent(self, event) -> None:
