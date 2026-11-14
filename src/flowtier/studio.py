@@ -73,6 +73,9 @@ class AppState(QObject):
         if self._domain_data.paint_cross_section(i, j, value):
             self.domain_data_changed.emit()
 
+    def update_center_lines_distance_field(self) -> None:
+        self._domain_data.update_center_lines_distance_field()
+
 
 class Mode(StrEnum):
     RESET = "reset"
@@ -520,6 +523,9 @@ class CrossSectionSketcher(QGraphicsView):
         if event.button() == Qt.LeftButton:
             self._painting = False
             self._last_voxel = None
+
+            self.app_state.update_center_lines_distance_field()
+
             event.accept()
             return
 

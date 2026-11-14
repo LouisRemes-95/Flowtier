@@ -25,7 +25,7 @@ class DomainData:
         self._build_void_distance_field(surface_path, subdivisions=2, chunk_size=1_000_000)
         self._build_initial_cross_section()
         self._build_center_lines_dependencies(center_lines_path)
-        self._update_center_lines_distance_field()
+        self.update_center_lines_distance_field()
 
     @property
     def precision(self) -> float:
@@ -322,7 +322,7 @@ class DomainData:
         self._cross_section = np.zeros(shape, dtype=bool)
         self._cross_section[n + 1, n + 1] = True
 
-    def _update_center_lines_distance_field(self, chunk_size: int = 1_000_000) -> None:
+    def update_center_lines_distance_field(self, chunk_size: int = 1_000_000) -> None:
         shape = tuple(self._grid_shape)
         n_voxels = int(np.prod(shape))
 
