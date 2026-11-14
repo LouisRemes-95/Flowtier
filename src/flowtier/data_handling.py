@@ -25,7 +25,7 @@ class DomainData:
         self._build_void_distance_field(surface_path, subdivisions=2, chunk_size=1_000_000)
         self._build_initial_cross_section()
         self._build_centerline_dependencies(center_lines_path)
-        self.update_sweep_distance_field()
+        self.update_sweep_confidence_field()
 
     @property
     def precision(self) -> float:
@@ -47,9 +47,16 @@ class DomainData:
     def _cross_section_distance_field(self) -> np.ndarray:
         return edt.edt(~self._cross_section, parallel=4, black_border=False)
 
+    @cached_property
+    def _labeled_voxelisation(self) -> np.ndarray:
+        print(self._sweep_confidence_field.shape)
+        print(self._void_distance_field.shape)
+        pass
+
     @property
     def plotting_surfaces(self) -> list[PolyData]:
-        distance = self.void_distance_field
+        labeled_voxelisation = self._labeled_voxelisation
+        distance = self._void_distance_field
         precision = self.precision
 
         binary = distance > 0
@@ -177,10 +184,10 @@ class DomainData:
 
             binary_dilation(binary_interface, iterations=3, output=binary_interface)
 
-        self.void_distance_field = np.full(self._grid_shape, np.nan, dtype=np.float32)
+        self._void_distance_field = np.full(self._grid_shape, np.nan, dtype=np.float32)
 
         interface_indices = np.flatnonzero(binary_interface)
-        flat_distance_field = self.void_distance_field.ravel()
+        flat_distance_field = self._void_distance_field.ravel()
 
         with Progress(
             TextColumn("{task.description}"),
@@ -213,15 +220,17 @@ class DomainData:
 
         with console.status("Propagating the void binary..."):
             structure = np.ones((3,) * 3, dtype=bool)
-            binary_voids = binary_propagation(self.void_distance_field < 0, mask=~binary_interface, structure=structure)
+            binary_voids = binary_propagation(
+                self._void_distance_field < 0, mask=~binary_interface, structure=structure
+            )
 
         with console.status("Computing the rest of the void distance field..."):
             void_sdf = edt.edt(~binary_interface, anisotropy=(self._precision,) * 3, parallel=4, black_border=False)
 
             void_sdf[binary_voids] *= -1
 
-            mask = np.isnan(self.void_distance_field)
-            self.void_distance_field[mask] = void_sdf[mask]
+            mask = np.isnan(self._void_distance_field)
+            self._void_distance_field[mask] = void_sdf[mask]
 
     def _build_centerline_dependencies(self, center_lines_path: Path) -> None:
         with np.load(center_lines_path) as data:
@@ -322,14 +331,12 @@ class DomainData:
         self._cross_section = np.zeros(shape, dtype=bool)
         self._cross_section[n + 1, n + 1] = True
 
-    def update_sweep_distance_field(self, chunk_size: int = 1_000_000) -> None:
+    def update_sweep_confidence_field(self, chunk_size: int = 1_000_000) -> None:
         shape = tuple(self._grid_shape)
         n_voxels = int(np.prod(shape))
 
-        if not hasattr(self, "_center_lines_distance_field"):
-            self._sweep_distance_field = np.empty(shape, dtype=np.float32)
-
-        flat_output = self._sweep_distance_field.ravel()
+        distance_field = np.empty(shape, dtype=np.float32)
+        flat_output = distance_field.ravel()
         flat_closest = self._nearest_centerline_indices.reshape(-1, 4)
 
         with Progress(
@@ -357,7 +364,9 @@ class DomainData:
 
                 progress.update(task, advance=stop - start)
 
-        self._sweep_distance_field *= self._precision
+        distance_field *= self._precision
+
+        self._sweep_confidence_field = 1.0 - distance_field / distance_field.max()
 
     @staticmethod
     def binary_to_voxel_surface(binary: np.ndarray, candidates: np.ndarray, voxel_size: float) -> PolyData:

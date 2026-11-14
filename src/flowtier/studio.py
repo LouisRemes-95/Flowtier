@@ -73,8 +73,8 @@ class AppState(QObject):
         if self._domain_data.paint_cross_section(i, j, value):
             self.domain_data_changed.emit()
 
-    def update_sweep_distance_field(self) -> None:
-        self._domain_data.update_sweep_distance_field()
+    def update_sweep_confidence_field(self) -> None:
+        self._domain_data.update_sweep_confidence_field()
 
 
 class Mode(StrEnum):
@@ -524,7 +524,7 @@ class CrossSectionSketcher(QGraphicsView):
             self._painting = False
             self._last_voxel = None
 
-            self.app_state.update_sweep_distance_field()
+            self.app_state.update_sweep_confidence_field()
 
             event.accept()
             return
