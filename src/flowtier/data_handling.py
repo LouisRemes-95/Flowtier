@@ -24,8 +24,8 @@ class DomainData:
         self._set_and_adjust_boundaries(surface_path)
         self._build_void_distance_field(surface_path, subdivisions=2, chunk_size=1_000_000)
         self._build_initial_cross_section()
-        self._build_center_lines_dependencies(center_lines_path)
-        self.update_center_lines_distance_field()
+        self._build_centerline_dependencies(center_lines_path)
+        self.update_sweep_distance_field()
 
     @property
     def precision(self) -> float:
@@ -223,7 +223,7 @@ class DomainData:
             mask = np.isnan(self.void_distance_field)
             self.void_distance_field[mask] = void_sdf[mask]
 
-    def _build_center_lines_dependencies(self, center_lines_path: Path) -> None:
+    def _build_centerline_dependencies(self, center_lines_path: Path) -> None:
         with np.load(center_lines_path) as data:
             if len(data.files) != 1:
                 raise UserError("The .npz file must contain exactly one array.")
@@ -236,7 +236,7 @@ class DomainData:
         center_lines = (center_lines - self.boundaries[0]) / self._precision
 
         self._build_affine_projection_coefficients(center_lines)
-        self._build_closest_center_lines()
+        self._build_nearest_centerline_indices()
 
     def _build_affine_projection_coefficients(self, center_lines: np.ndarray) -> None:
         origins = center_lines.mean(axis=1)
@@ -245,7 +245,7 @@ class DomainData:
         norms = np.linalg.norm(directions, axis=1)
 
         if not np.all(np.isfinite(norms)) or np.any(norms <= np.finfo(np.float32).eps):
-            raise ValueError("Center lines must have finite, distinct endpoints.")
+            raise ValueError("Centerlines must have finite, distinct endpoints.")
 
         directions /= norms[:, None]
 
@@ -273,7 +273,7 @@ class DomainData:
             )
         ).astype(np.float32)
 
-    def _build_closest_center_lines(self, chunk_size: int = 1_000_000) -> None:
+    def _build_nearest_centerline_indices(self, chunk_size: int = 1_000_000) -> None:
         coefficients = self._affine_projection_coefficients
         n_lines = coefficients.shape[0]
 
@@ -285,8 +285,8 @@ class DomainData:
 
         dtype = np.uint8 if n_lines <= 256 else np.uint16
 
-        self._closest_center_lines = np.empty((*shape, 4), dtype=dtype)
-        flat_output = self._closest_center_lines.reshape(-1, 4)
+        self._nearest_centerline_indices = np.empty((*shape, 4), dtype=dtype)
+        flat_output = self._nearest_centerline_indices.reshape(-1, 4)
 
         with Progress(
             TextColumn("{task.description}"),
@@ -296,7 +296,7 @@ class DomainData:
             console=console,
             transient=True,
         ) as progress:
-            task = progress.add_task("Finding closest centre lines", total=n_voxels)
+            task = progress.add_task("Finding closest centrelines", total=n_voxels)
 
             for start in range(0, n_voxels, chunk_size):
                 stop = min(start + chunk_size, n_voxels)
@@ -322,15 +322,15 @@ class DomainData:
         self._cross_section = np.zeros(shape, dtype=bool)
         self._cross_section[n + 1, n + 1] = True
 
-    def update_center_lines_distance_field(self, chunk_size: int = 1_000_000) -> None:
+    def update_sweep_distance_field(self, chunk_size: int = 1_000_000) -> None:
         shape = tuple(self._grid_shape)
         n_voxels = int(np.prod(shape))
 
         if not hasattr(self, "_center_lines_distance_field"):
-            self._center_lines_distance_field = np.empty(shape, dtype=np.float32)
+            self._sweep_distance_field = np.empty(shape, dtype=np.float32)
 
-        flat_output = self._center_lines_distance_field.ravel()
-        flat_closest = self._closest_center_lines.reshape(-1, 4)
+        flat_output = self._sweep_distance_field.ravel()
+        flat_closest = self._nearest_centerline_indices.reshape(-1, 4)
 
         with Progress(
             TextColumn("{task.description}"),
@@ -340,7 +340,7 @@ class DomainData:
             console=console,
             transient=True,
         ) as progress:
-            task = progress.add_task("Computing center lines distance field", total=n_voxels)
+            task = progress.add_task("Computing sweep distance field", total=n_voxels)
 
             for start in range(0, n_voxels, chunk_size):
                 stop = min(start + chunk_size, n_voxels)
@@ -357,7 +357,7 @@ class DomainData:
 
                 progress.update(task, advance=stop - start)
 
-        self._center_lines_distance_field *= self._precision
+        self._sweep_distance_field *= self._precision
 
     @staticmethod
     def binary_to_voxel_surface(binary: np.ndarray, candidates: np.ndarray, voxel_size: float) -> PolyData:
