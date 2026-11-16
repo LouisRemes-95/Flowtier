@@ -22,7 +22,7 @@ class DomainData:
         self._precision = precision
 
         self._set_and_adjust_boundaries(surface_path)
-        self._build_void_distance_field(surface_path, subdivisions=2, chunk_size=1_000_000)
+        self._build_void_confidence_field(surface_path, subdivisions=2, chunk_size=1_000_000)
         self._build_initial_cross_section()
         self._build_centerline_dependencies(center_lines_path)
         self.update_sweep_confidence_field()
@@ -55,13 +55,11 @@ class DomainData:
 
     @property
     def plotting_surfaces(self) -> list[PolyData]:
-        labeled_voxelisation = self._labeled_voxelisation
-        distance = self._void_distance_field
-        precision = self.precision
+        # labeled_voxelisation = self._labeled_voxelisation
 
-        binary = distance > 0
+        binary = self._void_confidence_field < 1
 
-        shell_voxel_candidates = binary & (distance <= precision)
+        shell_voxel_candidates = binary & (binary_dilation(~binary, iterations=1))
 
         # Include the six domain boundaries
         shell_voxel_candidates[0, :, :] |= binary[0, :, :]
@@ -71,9 +69,9 @@ class DomainData:
         shell_voxel_candidates[:, :, 0] |= binary[:, :, 0]
         shell_voxel_candidates[:, :, -1] |= binary[:, :, -1]
 
-        surface = self.binary_to_voxel_surface(binary, shell_voxel_candidates, precision)
+        surface = self.binary_to_voxel_surface(binary, shell_voxel_candidates, self.precision)
 
-        surface.translate(self.boundaries[0] - precision / 2, inplace=True)
+        surface.translate(self.boundaries[0] - self.precision / 2, inplace=True)
 
         return [surface]
 
@@ -125,7 +123,10 @@ class DomainData:
 
         self._boundaries = adjusted_boundaries
 
-    def _build_void_distance_field(self, surface_path: Path, chunk_size: int = 100_000, subdivisions: int = 0) -> None:
+    def _build_void_confidence_field(
+        self, surface_path: Path, chunk_size: int = 100_000, subdivisions: int = 0
+    ) -> np.ndarray:
+
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive.")
 
@@ -184,10 +185,10 @@ class DomainData:
 
             binary_dilation(binary_interface, iterations=3, output=binary_interface)
 
-        self._void_distance_field = np.full(self._grid_shape, np.nan, dtype=np.float32)
+        distance_field = np.full(self._grid_shape, np.nan, dtype=np.float32)
 
         interface_indices = np.flatnonzero(binary_interface)
-        flat_distance_field = self._void_distance_field.ravel()
+        flat_distance_field = distance_field.ravel()
 
         with Progress(
             TextColumn("{task.description}"),
@@ -220,17 +221,17 @@ class DomainData:
 
         with console.status("Propagating the void binary..."):
             structure = np.ones((3,) * 3, dtype=bool)
-            binary_voids = binary_propagation(
-                self._void_distance_field < 0, mask=~binary_interface, structure=structure
-            )
+            binary_voids = binary_propagation(distance_field < 0, mask=~binary_interface, structure=structure)
 
         with console.status("Computing the rest of the void distance field..."):
             void_sdf = edt.edt(~binary_interface, anisotropy=(self._precision,) * 3, parallel=4, black_border=False)
 
             void_sdf[binary_voids] *= -1
 
-            mask = np.isnan(self._void_distance_field)
-            self._void_distance_field[mask] = void_sdf[mask]
+            mask = np.isnan(distance_field)
+            distance_field[mask] = void_sdf[mask]
+
+        self._void_confidence_field = np.clip(1.0 - distance_field / distance_field.max(), 0, 1)
 
     def _build_centerline_dependencies(self, center_lines_path: Path) -> None:
         with np.load(center_lines_path) as data:
@@ -329,7 +330,7 @@ class DomainData:
         shape = (n * 2 + 1,) * 2
 
         self._cross_section = np.zeros(shape, dtype=bool)
-        self._cross_section[n + 1, n + 1] = True
+        self._cross_section[n, n] = True
 
     def update_sweep_confidence_field(self, chunk_size: int = 1_000_000) -> None:
         shape = tuple(self._grid_shape)
@@ -366,7 +367,7 @@ class DomainData:
 
         distance_field *= self._precision
 
-        self._sweep_confidence_field = 1.0 - distance_field / distance_field.max()
+        self._sweep_confidence_field = np.clip(1.0 - distance_field / distance_field.max(), 0, 1)
 
     @staticmethod
     def binary_to_voxel_surface(binary: np.ndarray, candidates: np.ndarray, voxel_size: float) -> PolyData:
