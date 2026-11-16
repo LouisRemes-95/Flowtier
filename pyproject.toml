@@ -17,6 +17,7 @@ dependencies = [
     "pyvistaqt>=0.13.2",
     "rich>=15.0.0",
     "rich-argparse>=1.8.0",
+    "scikit-image>=0.26.0",
     "trimesh>=5.1.1",
 ]
 

@@ -9,6 +9,8 @@ from numba import njit, prange
 from pyvista import PolyData
 from rich.progress import BarColumn, Progress, TextColumn
 from scipy.ndimage import binary_dilation, binary_propagation
+from skimage.morphology import local_minima
+from skimage.segmentation import watershed
 
 from flowtier.common import UserError, console
 
@@ -26,6 +28,7 @@ class DomainData:
         self._build_initial_cross_section()
         self._build_centerline_dependencies(center_lines_path)
         self.update_sweep_confidence_field()
+        pass
 
     @property
     def precision(self) -> float:
@@ -48,16 +51,28 @@ class DomainData:
         return edt.edt(~self._cross_section, parallel=4, black_border=False)
 
     @cached_property
-    def _labeled_voxelisation(self) -> np.ndarray:
-        print(self._sweep_confidence_field.shape)
-        print(self._void_distance_field.shape)
-        pass
+    def _labeled_voxelisation(self, power: int = 4) -> np.ndarray:
+        segmentation_field = self._void_confidence_field**power - self._sweep_confidence_field**power
+
+        mask = self._void_confidence_field < 1
+
+        minima = local_minima(segmentation_field, connectivity=1) & mask
+
+        markers = np.zeros(minima.shape, dtype=np.uint16)
+        _, inverse = np.unique(self._nearest_centerline_indices[:, :, :, 0][minima], return_inverse=True)
+        markers[minima] = inverse + 1
+
+        return watershed(
+            self._void_confidence_field**power - self._sweep_confidence_field**power,
+            markers=markers,
+            mask=mask,
+        )
 
     @property
     def plotting_surfaces(self) -> list[PolyData]:
-        # labeled_voxelisation = self._labeled_voxelisation
+        labeled_voxelisation = self._labeled_voxelisation
 
-        binary = self._void_confidence_field < 1
+        binary = labeled_voxelisation == 2
 
         shell_voxel_candidates = binary & (binary_dilation(~binary, iterations=1))
 
@@ -243,7 +258,7 @@ class DomainData:
         if center_lines.ndim != 3 or center_lines.shape[1:] != (2, 3):
             raise UserError(f"Expected an (N, 2, 3) array, got {center_lines.shape}.")
 
-        center_lines = (center_lines - self.boundaries[0]) / self._precision
+        # center_lines = (center_lines - self.boundaries[0]) / self._precision
 
         self._build_affine_projection_coefficients(center_lines)
         self._build_nearest_centerline_indices()
@@ -365,8 +380,6 @@ class DomainData:
 
                 progress.update(task, advance=stop - start)
 
-        distance_field *= self._precision
-
         self._sweep_confidence_field = np.clip(1.0 - distance_field / distance_field.max(), 0, 1)
 
     @staticmethod
@@ -421,13 +434,7 @@ def _bilinear_interpolate(distance_field: np.ndarray, u: float, v: float) -> flo
 
 
 @njit(parallel=True, cache=True)
-def _find_closest_center_lines(
-    start: int,
-    coefficients: np.ndarray,
-    output: np.ndarray,
-    ny: int,
-    nz: int,
-) -> None:
+def _find_closest_center_lines(start: int, coefficients: np.ndarray, output: np.ndarray, ny: int, nz: int) -> None:
     n_lines = coefficients.shape[0]
     n_closest = output.shape[1]
 
@@ -449,11 +456,16 @@ def _find_closest_center_lines(
 
             distance_squared = u * u + v * v
 
-            worst = np.argmax(best_distances)
+            if distance_squared < best_distances[-1]:
+                pos = n_closest - 1
 
-            if distance_squared < best_distances[worst]:
-                best_distances[worst] = distance_squared
-                best_indices[worst] = line
+                while pos > 0 and distance_squared < best_distances[pos - 1]:
+                    best_distances[pos] = best_distances[pos - 1]
+                    best_indices[pos] = best_indices[pos - 1]
+                    pos -= 1
+
+                best_distances[pos] = distance_squared
+                best_indices[pos] = line
 
         output[p] = best_indices
 
@@ -476,7 +488,6 @@ def _compute_minimum_distance(
         k = index % nz
 
         minimum = np.inf
-
         for c in range(closest_lines.shape[1]):
             line = closest_lines[p, c]
 
