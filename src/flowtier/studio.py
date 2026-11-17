@@ -11,6 +11,7 @@ from PySide6.QtCore import (
     QPoint,
     QRectF,
     Qt,
+    QThread,
     Signal,
 )
 from PySide6.QtGui import (
@@ -30,8 +31,10 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QHBoxLayout,
     QMainWindow,
+    QProgressBar,
     QWidget,
 )
+from pyvista import PolyData
 from pyvistaqt import QtInteractor
 from rich.live import Live
 from rich.text import Text
@@ -60,22 +63,66 @@ STYLE_SHEET = f"""
 
 
 class AppState(QObject):
-    domain_data_changed = Signal()
+    cross_section_changed = Signal()
+    sweep_changed = Signal(object)
+    computing_changed = Signal(bool)
 
     def __init__(self, domain_data: DomainData) -> None:
         super().__init__()
         self._domain_data = domain_data
 
+        self._worker = None
+        self._pending = False
+        self._revision = 0
+
     @property
-    def domain_data(self):
+    def domain_data(self) -> DomainData:
         return self._domain_data
 
     def paint_cross_section(self, i: np.ndarray, j: np.ndarray, value: bool) -> None:
         if self._domain_data.paint_cross_section(i, j, value):
-            self.domain_data_changed.emit()
+            self._revision += 1
+            self.cross_section_changed.emit()
 
     def update_sweep(self) -> None:
-        self._domain_data.update_sweep_dependencies()
+        self._pending = True
+
+        if self._worker is None:
+            self._start_sweep()
+
+    def _start_sweep(self) -> None:
+        self._pending = False
+
+        self._worker = SweepWorker(self._domain_data, self._domain_data.cross_section.copy(), self._revision)
+
+        self._worker.result_ready.connect(self._on_sweep_ready)
+        self._worker.failed.connect(self._on_sweep_failed)
+        self._worker.finished.connect(self._on_sweep_finished)
+
+        self.computing_changed.emit(True)
+        self._worker.start()
+
+    def _on_sweep_ready(
+        self, revision: int, confidence: np.ndarray, indices: np.ndarray, labels: np.ndarray, surfaces: list[PolyData]
+    ) -> None:
+        if revision != self._revision:
+            return
+
+        self._domain_data.apply_sweep_dependencies(confidence, indices, labels)
+
+        self.sweep_changed.emit(surfaces)
+
+    def _on_sweep_failed(self, message: str) -> None:
+        console.print(f"[red]Sweep computation failed: {message}[/red]")
+
+    def _on_sweep_finished(self) -> None:
+        self._worker.deleteLater()
+        self._worker = None
+
+        if self._pending:
+            self._start_sweep()
+        else:
+            self.computing_changed.emit(False)
 
 
 class Mode(StrEnum):
@@ -108,7 +155,7 @@ class FlowtierStudio(QMainWindow):
         self._build_ui()
         self._build_connections()
 
-        self._on_domain_data_changed()
+        self.app_state.update_sweep()
 
     def _build_ui(self) -> None:
         self.setWindowTitle("Flowtier")
@@ -127,10 +174,8 @@ class FlowtierStudio(QMainWindow):
         main_layout.addWidget(right_container, 1)
 
     def _build_connections(self) -> None:
-        self.app_state.domain_data_changed.connect(self._on_domain_data_changed)
-
-    def _on_domain_data_changed(self) -> None:
-        self._update_3d_view()
+        self.app_state.sweep_changed.connect(self._update_3d_view)
+        self.app_state.computing_changed.connect(self._computing_indicator.setVisible)
 
     def _build_3d_view(self) -> QWidget:
         self._3d_plotter = QtInteractor()
@@ -150,22 +195,30 @@ class FlowtierStudio(QMainWindow):
         self._3d_plotter.reset_camera()
         self._3d_plotter.camera.zoom(1 / 1.5)
 
+        self._computing_indicator = QProgressBar(self._3d_plotter)
+        self._computing_indicator.setRange(0, 0)
+        self._computing_indicator.setTextVisible(False)
+        self._computing_indicator.setFixedSize(120, 12)
+        self._computing_indicator.move(15, 15)
+        self._computing_indicator.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._computing_indicator.hide()
+
         return self._3d_plotter
 
-    def _update_3d_view(self) -> None:
+    def _update_3d_view(self, surfaces: list[PolyData]) -> None:
         for actor in getattr(self, "_surface_actors", []):
-            self._3d_plotter.remove_actor(actor)
+            self._3d_plotter.remove_actor(actor, render=False)
 
         self._surface_actors = []
 
-        for i, surface in enumerate(self.app_state.domain_data.plotting_surfaces):
+        for i, surface in enumerate(surfaces):
             actor = self._3d_plotter.add_mesh(
-                surface,
-                color=cc.glasbey[i % len(cc.glasbey)],
-                show_edges=False,
-                smooth_shading=False,
+                surface, color=cc.glasbey[i % len(cc.glasbey)], show_edges=False, smooth_shading=False, render=False
             )
+
             self._surface_actors.append(actor)
+
+        self._3d_plotter.render()
 
 
 class CrossSectionSketcher(QGraphicsView):
@@ -186,7 +239,7 @@ class CrossSectionSketcher(QGraphicsView):
 
         self.setMinimumSize(300, 300)
 
-        self._on_domain_data_changed()
+        self._update_view()
 
     def _build_view(self) -> None:
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -216,10 +269,7 @@ class CrossSectionSketcher(QGraphicsView):
         self._build_center_marker()
 
     def _build_connections(self) -> None:
-        self.app_state.domain_data_changed.connect(self._on_domain_data_changed)
-
-    def _on_domain_data_changed(self) -> None:
-        self._update_view()
+        self.app_state.cross_section_changed.connect(self._update_view)
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -582,6 +632,27 @@ class CrossSectionSketcher(QGraphicsView):
             return
 
         super().mouseDoubleClickEvent(event)
+
+
+class SweepWorker(QThread):
+    result_ready = Signal(int, object, object, object, object)
+    failed = Signal(str)
+
+    def __init__(self, domain_data: DomainData, cross_section: np.ndarray, revision: int) -> None:
+        super().__init__()
+
+        self._domain_data = domain_data
+        self._cross_section = cross_section
+        self._revision = revision
+
+    def run(self) -> None:
+        try:
+            results = self._domain_data.compute_segmentation(self._cross_section)
+
+            self.result_ready.emit(self._revision, *results)
+
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:

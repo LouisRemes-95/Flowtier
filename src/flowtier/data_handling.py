@@ -1,4 +1,3 @@
-from functools import cached_property
 from pathlib import Path
 
 import edt
@@ -27,8 +26,6 @@ class DomainData:
         self._build_void_confidence_field(surface_path, subdivisions=2, chunk_size=1_000_000)
         self._build_initial_cross_section()
         self._build_centerline_dependencies(center_lines_path)
-        self.update_sweep_dependencies()
-        pass
 
     @property
     def precision(self) -> float:
@@ -45,48 +42,6 @@ class DomainData:
     @property
     def cross_section(self) -> np.ndarray:
         return self._cross_section
-
-    @cached_property
-    def _cross_section_distance_field(self) -> np.ndarray:
-        return edt.edt(~self._cross_section, parallel=4, black_border=False)
-
-    @cached_property
-    def _labeled_voxelisation(self, power: int = 4) -> np.ndarray:
-        segmentation_field = self._void_confidence_field**power - self._sweep_confidence_field**power
-
-        mask = self._void_confidence_field < 1
-
-        minima = local_minima(segmentation_field, connectivity=1) & mask
-
-        markers = np.zeros(minima.shape, dtype=np.uint16)
-        _, inverse = np.unique(self._nearest_sweep_indices[minima], return_inverse=True)
-        markers[minima] = inverse + 1
-
-        return watershed(
-            self._void_confidence_field**power - self._sweep_confidence_field**power,
-            markers=markers,
-            mask=mask,
-        )
-
-    @property
-    def plotting_surfaces(self) -> list[PolyData]:
-        labeled_voxelisation = self._labeled_voxelisation
-
-        surfaces = []
-
-        labels = np.unique(labeled_voxelisation)
-        labels = labels[labels != 0]
-        for label in labels:
-            binary = labeled_voxelisation == label
-
-            shell = binary & ~binary_erosion(binary, border_value=0)
-
-            surface = self.binary_to_voxel_surface(binary, shell, self.precision)
-            surface.translate(self.boundaries[0] - self.precision / 2, inplace=True)
-
-            surfaces.append(surface)
-
-        return surfaces
 
     @staticmethod
     def _read_ply_bounds(surface_path: Path) -> np.ndarray | None:
@@ -342,48 +297,100 @@ class DomainData:
         self._cross_section = np.zeros(shape, dtype=bool)
         self._cross_section[n, n] = True
 
-    def update_sweep_dependencies(self, chunk_size: int = 1_000_000) -> None:
-        # _nearest_sweep_indices and _sweep_confidence_field
+    def update_segmentation(self):
+        confidence, indices, labels, _ = self.compute_segmentation(self.cross_section.copy())
+        self.apply_sweep_dependencies(confidence, indices, labels)
 
+    def compute_segmentation(
+        self, cross_section: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[PolyData]]:
+
+        confidence, indices = self.compute_sweep_dependencies(cross_section)
+        labels = self.compute_labeled_voxelisation(confidence, indices)
+        surfaces = self.compute_plotting_surfaces(labels)
+
+        return confidence, indices, labels, surfaces
+
+    def apply_sweep_dependencies(
+        self, confidence_field: np.ndarray, nearest_indices: np.ndarray, labels: np.ndarray
+    ) -> None:
+        self._sweep_confidence_field = confidence_field
+        self._nearest_sweep_indices = nearest_indices
+        self._labeled_voxelisation = labels
+
+    def compute_sweep_dependencies(
+        self, cross_section: np.ndarray, chunk_size: int = 1_000_000
+    ) -> tuple[np.ndarray, np.ndarray]:
         shape = tuple(self._grid_shape)
         n_voxels = int(np.prod(shape))
 
         distance_field = np.empty(shape, dtype=np.float32)
+        nearest_indices = np.empty(
+            shape,
+            dtype=self._nearest_centerline_indices.dtype,
+        )
+
         flat_output = distance_field.ravel()
+        flat_indices = nearest_indices.ravel()
         flat_closest = self._nearest_centerline_indices.reshape(-1, 4)
 
-        self._nearest_sweep_indices = np.empty(shape, dtype=self._nearest_centerline_indices.dtype)
-        flat_indices = self._nearest_sweep_indices.ravel()
+        cross_section_distance_field = edt.edt(
+            ~cross_section,
+            parallel=4,
+            black_border=False,
+        )
 
-        with Progress(
-            TextColumn("{task.description}"),
-            BarColumn(complete_style="blue", finished_style="blue"),
-            TextColumn("{task.percentage:>3.0f}%"),
-            TextColumn("[white]{task.elapsed:0.1f}s"),
-            console=console,
-            transient=True,
-        ) as progress:
-            task = progress.add_task("Computing sweep distance field", total=n_voxels)
+        for start in range(0, n_voxels, chunk_size):
+            stop = min(start + chunk_size, n_voxels)
 
-            for start in range(0, n_voxels, chunk_size):
-                stop = min(start + chunk_size, n_voxels)
+            _compute_minimum_distance(
+                start,
+                flat_closest[start:stop],
+                self._affine_projection_coefficients,
+                cross_section_distance_field,
+                flat_output[start:stop],
+                flat_indices[start:stop],
+                shape[1],
+                shape[2],
+            )
 
-                _compute_minimum_distance(
-                    start,
-                    flat_closest[start:stop],
-                    self._affine_projection_coefficients,
-                    self._cross_section_distance_field,
-                    flat_output[start:stop],
-                    flat_indices[start:stop],
-                    shape[1],
-                    shape[2],
-                )
+        confidence_field = np.clip(1.0 - distance_field / distance_field.max(), 0, 1)
 
-                progress.update(task, advance=stop - start)
+        return confidence_field, nearest_indices
 
-        self._sweep_confidence_field = np.clip(1.0 - distance_field / distance_field.max(), 0, 1)
+    def compute_labeled_voxelisation(
+        self, sweep_confidence_field: np.ndarray, nearest_sweep_indices: np.ndarray, power: int = 4
+    ) -> np.ndarray:
+        segmentation_field = self._void_confidence_field**power - sweep_confidence_field**power
 
-        self.__dict__.pop("_labeled_voxelisation", None)
+        mask = self._void_confidence_field < 1
+        minima = local_minima(segmentation_field, connectivity=1) & mask
+
+        markers = np.zeros(minima.shape, dtype=np.uint16)
+
+        _, inverse = np.unique(nearest_sweep_indices[minima], return_inverse=True)
+        markers[minima] = inverse + 1
+
+        return watershed(segmentation_field, markers=markers, mask=mask)
+
+    def compute_plotting_surfaces(self, labeled_voxelisation: np.ndarray) -> list[PolyData]:
+        surfaces = []
+
+        labels = np.unique(labeled_voxelisation)
+        labels = labels[labels != 0]
+
+        for label in labels:
+            binary = labeled_voxelisation == label
+
+            shell = binary & ~binary_erosion(binary, border_value=0)
+
+            surface = self.binary_to_voxel_surface(binary, shell, self.precision)
+
+            surface.translate(self.boundaries[0] - self.precision / 2, inplace=True)
+
+            surfaces.append(surface)
+
+        return surfaces
 
     @staticmethod
     def binary_to_voxel_surface(binary: np.ndarray, candidates: np.ndarray, voxel_size: float) -> PolyData:
@@ -411,7 +418,6 @@ class DomainData:
 
         cross_section[i, j] = value
 
-        self.__dict__.pop("_cross_section_distance_field", None)
         return True
 
 
@@ -492,7 +498,7 @@ def _compute_minimum_distance(
         k = index % nz
 
         minimum = np.inf
-        nearest_index = -1
+        nearest_index = closest_lines[p, 0]
 
         for c in range(closest_lines.shape[1]):
             line = closest_lines[p, c]
