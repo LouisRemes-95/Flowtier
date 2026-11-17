@@ -27,7 +27,7 @@ class DomainData:
         self._build_void_confidence_field(surface_path, subdivisions=2, chunk_size=1_000_000)
         self._build_initial_cross_section()
         self._build_centerline_dependencies(center_lines_path)
-        self.update_sweep_confidence_field()
+        self.update_sweep_dependencies()
         pass
 
     @property
@@ -59,7 +59,7 @@ class DomainData:
         minima = local_minima(segmentation_field, connectivity=1) & mask
 
         markers = np.zeros(minima.shape, dtype=np.uint16)
-        _, inverse = np.unique(self._nearest_centerline_indices[:, :, :, 0][minima], return_inverse=True)
+        _, inverse = np.unique(self._nearest_sweep_indices[minima], return_inverse=True)
         markers[minima] = inverse + 1
 
         return watershed(
@@ -342,13 +342,18 @@ class DomainData:
         self._cross_section = np.zeros(shape, dtype=bool)
         self._cross_section[n, n] = True
 
-    def update_sweep_confidence_field(self, chunk_size: int = 1_000_000) -> None:
+    def update_sweep_dependencies(self, chunk_size: int = 1_000_000) -> None:
+        # _nearest_sweep_indices and _sweep_confidence_field
+
         shape = tuple(self._grid_shape)
         n_voxels = int(np.prod(shape))
 
         distance_field = np.empty(shape, dtype=np.float32)
         flat_output = distance_field.ravel()
         flat_closest = self._nearest_centerline_indices.reshape(-1, 4)
+
+        self._nearest_sweep_indices = np.empty(shape, dtype=self._nearest_centerline_indices.dtype)
+        flat_indices = self._nearest_sweep_indices.ravel()
 
         with Progress(
             TextColumn("{task.description}"),
@@ -369,6 +374,7 @@ class DomainData:
                     self._affine_projection_coefficients,
                     self._cross_section_distance_field,
                     flat_output[start:stop],
+                    flat_indices[start:stop],
                     shape[1],
                     shape[2],
                 )
@@ -376,6 +382,7 @@ class DomainData:
                 progress.update(task, advance=stop - start)
 
         self._sweep_confidence_field = np.clip(1.0 - distance_field / distance_field.max(), 0, 1)
+
         self.__dict__.pop("_labeled_voxelisation", None)
 
     @staticmethod
@@ -473,6 +480,7 @@ def _compute_minimum_distance(
     coefficients: np.ndarray,
     distance_field: np.ndarray,
     output: np.ndarray,
+    indices_output: np.ndarray,
     ny: int,
     nz: int,
 ) -> None:
@@ -484,6 +492,8 @@ def _compute_minimum_distance(
         k = index % nz
 
         minimum = np.inf
+        nearest_index = -1
+
         for c in range(closest_lines.shape[1]):
             line = closest_lines[p, c]
 
@@ -496,8 +506,10 @@ def _compute_minimum_distance(
 
             if distance < minimum:
                 minimum = distance
+                nearest_index = line
 
         output[p] = minimum
+        indices_output[p] = nearest_index
 
 
 _CORNERS = np.array(

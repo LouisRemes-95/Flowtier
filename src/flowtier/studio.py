@@ -75,7 +75,7 @@ class AppState(QObject):
             self.domain_data_changed.emit()
 
     def update_sweep(self) -> None:
-        self._domain_data.update_sweep_confidence_field()
+        self._domain_data.update_sweep_dependencies()
 
 
 class Mode(StrEnum):
@@ -106,7 +106,9 @@ class FlowtierStudio(QMainWindow):
         self._app_config = app_config
 
         self._build_ui()
-        self._update_3d_view()
+        self._build_connections()
+
+        self._on_domain_data_changed()
 
     def _build_ui(self) -> None:
         self.setWindowTitle("Flowtier")
@@ -123,6 +125,12 @@ class FlowtierStudio(QMainWindow):
 
         main_layout.addWidget(left_container, 1)
         main_layout.addWidget(right_container, 1)
+
+    def _build_connections(self) -> None:
+        self.app_state.domain_data_changed.connect(self._on_domain_data_changed)
+
+    def _on_domain_data_changed(self) -> None:
+        self._update_3d_view()
 
     def _build_3d_view(self) -> QWidget:
         self._3d_plotter = QtInteractor()
@@ -174,7 +182,7 @@ class CrossSectionSketcher(QGraphicsView):
 
         self._build_view()
         self._build_dependencies()
-        self._build_conections()
+        self._build_connections()
 
         self.setMinimumSize(300, 300)
 
@@ -207,7 +215,7 @@ class CrossSectionSketcher(QGraphicsView):
 
         self._build_center_marker()
 
-    def _build_conections(self) -> None:
+    def _build_connections(self) -> None:
         self.app_state.domain_data_changed.connect(self._on_domain_data_changed)
 
     def _on_domain_data_changed(self) -> None:
