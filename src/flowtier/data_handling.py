@@ -3,12 +3,11 @@ from pathlib import Path
 import edt
 import igl
 import numpy as np
-import pyvista as pv
 import trimesh
 from numba import njit, prange
 from pyvista import PolyData
 from rich.progress import BarColumn, Progress, TextColumn
-from scipy.ndimage import binary_dilation, binary_erosion, binary_propagation, label
+from scipy.ndimage import binary_dilation, binary_erosion, binary_propagation
 from skimage.morphology import local_minima
 from skimage.segmentation import watershed
 
@@ -385,14 +384,14 @@ class DomainData:
         segmentation_field = self._void_confidence_field**power - sweep_confidence_field**power
 
         mask = self._void_confidence_field < 1
-        minima = local_minima(segmentation_field, connectivity=1) & mask
+        minima = local_minima(segmentation_field, connectivity=3) & mask
 
         markers = np.zeros(minima.shape, dtype=np.uint16)
 
         _, inverse = np.unique(nearest_sweep_indices[minima], return_inverse=True)
         markers[minima] = inverse + 1
 
-        return watershed(segmentation_field, markers=markers, mask=mask)
+        return watershed(segmentation_field, markers=markers, mask=mask, connectivity=3)
 
     def _compute_plotting_surfaces(self, labeled_voxelisation: np.ndarray) -> list[PolyData]:
         surfaces = []
@@ -434,104 +433,97 @@ class DomainData:
     def paint_cross_section(self, i: np.ndarray, j: np.ndarray, value: bool) -> bool:
         cross_section = self.cross_section
 
-        if np.all(cross_section[i, j] == value):
+        mirrored_i = cross_section.shape[0] - 1 - i
+
+        if np.all((cross_section[i, j] == value) & (cross_section[mirrored_i, j] == value)):
             return False
 
         cross_section[i, j] = value
+        cross_section[mirrored_i, j] = value
 
         return True
 
     def compute_sweep_surface(self, cross_section: np.ndarray) -> PolyData:
-        structure = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
+        pixels = np.argwhere(cross_section)
 
-        components, n_components = label(cross_section, structure=structure)
-
-        if n_components == 0:
+        if len(pixels) == 0:
             return PolyData()
 
-        cross_section_meshes = []
+        pixels = pixels - (np.array(cross_section.shape) - 1) / 2
 
-        for component_id in range(1, n_components + 1):
-            pixels = np.argwhere(components == component_id)
-
-            # Build one square per True pixel
-            corners = pixels[:, None, :] + np.array([[0, 0], [1, 0], [1, 1], [0, 1]])
-
-            points, inverse = np.unique(corners.reshape(-1, 2), axis=0, return_inverse=True)
-
-            points = points.astype(np.float64) - np.array(cross_section.shape) / 2
-
-            vertices = np.column_stack((points, np.zeros(len(points))))
-
-            faces = np.column_stack((np.full(len(pixels), 4), inverse.reshape(-1, 4)))
-
-            cross_section_meshes.append(PolyData(vertices, faces.ravel()))
-
-        # Clipping box: one voxel beyond the domain
         box_min = self.boundaries[0] - self.precision
         box_max = self.boundaries[1] + self.precision
         box_center = (box_min + box_max) / 2
 
-        half_length = np.linalg.norm(box_max - box_min)
+        half_width = self.precision / 2
 
-        surfaces = []
+        all_vertices = []
+        all_faces = []
+        offset = 0
+
+        square = np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]])
+
+        # Six faces: two caps and four sides
+        face_pattern = np.array([[0, 3, 2, 1], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]])
 
         for center_line in self._center_lines:
-            origin = center_line.mean(axis=0)
+            origin = center_line.mean(axis=0).astype(np.float64)
 
-            direction = center_line[1] - center_line[0]
+            direction = center_line[1].astype(np.float64) - center_line[0].astype(np.float64)
             direction /= np.linalg.norm(direction)
 
-            # Use the same local basis as the sweep distance calculation
             ex, ey = self._compute_local_basis(direction[None, :])
             ex, ey = ex[0], ey[0]
 
-            # Centre the extrusion along the infinite centre line
+            # One infinite line for each painted pixel
             origin += np.dot(box_center - origin, direction) * direction
 
-            for cross_section_mesh in cross_section_meshes:
-                # Extrude the exact pixel geometry, including end caps
-                surface = cross_section_mesh.extrude((0, 0, 2 * half_length), capping=True).triangulate().clean()
+            centers = origin + self.precision * (pixels[:, 0, None] * ex + pixels[:, 1, None] * ey)
 
-                if not surface.is_manifold or surface.n_open_edges:
-                    raise ValueError(
-                        "The swept cross-section is not a closed manifold. Check for pixel regions touching at corners."
-                    )
+            # Clip the lines to the expanded domain box
+            t_min = np.full(len(centers), -np.inf)
+            t_max = np.full(len(centers), np.inf)
+            valid = np.ones(len(centers), dtype=bool)
 
-                # Transform from local coordinates to physical coordinates
-                coordinates = surface.points.copy()
+            for axis in range(3):
+                if abs(direction[axis]) < 1e-12:
+                    valid &= (centers[:, axis] >= box_min[axis]) & (centers[:, axis] <= box_max[axis])
+                    continue
 
-                surface.points = (
-                    origin
-                    + coordinates[:, 0, None] * self.precision * ex
-                    + coordinates[:, 1, None] * self.precision * ey
-                    + (coordinates[:, 2, None] - half_length) * direction
-                )
+                t0 = (box_min[axis] - centers[:, axis]) / direction[axis]
+                t1 = (box_max[axis] - centers[:, axis]) / direction[axis]
 
-                # Clip and cap at each of the six domain boundaries
-                for axis in range(3):
-                    for value, sign in ((box_min[axis], 1), (box_max[axis], -1)):
-                        normal = np.zeros(3)
-                        normal[axis] = sign
+                t_min = np.maximum(t_min, np.minimum(t0, t1))
+                t_max = np.minimum(t_max, np.maximum(t0, t1))
 
-                        plane_origin = box_center.copy()
-                        plane_origin[axis] = value
+            valid &= t_min < t_max
 
-                        surface = surface.clip_closed_surface(
-                            normal=normal,
-                            origin=plane_origin,
-                        )
+            if not np.any(valid):
+                continue
 
-                        if surface.n_cells == 0:
-                            break
+            starts = centers[valid] + t_min[valid, None] * direction
+            ends = centers[valid] + t_max[valid, None] * direction
 
-                    if surface.n_cells == 0:
-                        break
+            # Square cross-section, aligned with ex and ey
+            corners = half_width * (square[:, 0, None] * ex + square[:, 1, None] * ey)
 
-                if surface.n_cells:
-                    surfaces.append(surface)
+            vertices = np.concatenate((starts[:, None, :] + corners, ends[:, None, :] + corners), axis=1)
 
-        return pv.merge(surfaces, merge_points=False) if surfaces else PolyData()
+            n = len(vertices)
+
+            faces = face_pattern[None, :, :] + 8 * np.arange(n)[:, None, None] + offset
+
+            faces = np.concatenate((np.full((*faces.shape[:2], 1), 4), faces), axis=2)
+
+            all_vertices.append(vertices.reshape(-1, 3))
+            all_faces.append(faces.reshape(-1, 5))
+
+            offset += 8 * n
+
+        if not all_vertices:
+            return PolyData()
+
+        return PolyData(np.vstack(all_vertices), np.vstack(all_faces).ravel())
 
 
 @njit(inline="always")
