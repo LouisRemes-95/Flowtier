@@ -4,6 +4,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
+import colorcet as cc
 import numpy as np
 from PySide6.QtCore import (
     QObject,
@@ -144,15 +145,19 @@ class FlowtierStudio(QMainWindow):
         return self._3d_plotter
 
     def _update_3d_view(self) -> None:
-        for surface in self.app_state.domain_data.plotting_surfaces:
-            self._3d_plotter.add_mesh(
+        for actor in getattr(self, "_surface_actors", []):
+            self._3d_plotter.remove_actor(actor)
+
+        self._surface_actors = []
+
+        for i, surface in enumerate(self.app_state.domain_data.plotting_surfaces):
+            actor = self._3d_plotter.add_mesh(
                 surface,
-                name="voxel_surface",
-                color="cornflowerblue",
-                style="surface",
+                color=cc.glasbey[i % len(cc.glasbey)],
                 show_edges=False,
                 smooth_shading=False,
             )
+            self._surface_actors.append(actor)
 
 
 class CrossSectionSketcher(QGraphicsView):

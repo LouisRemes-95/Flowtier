@@ -8,7 +8,7 @@ import trimesh
 from numba import njit, prange
 from pyvista import PolyData
 from rich.progress import BarColumn, Progress, TextColumn
-from scipy.ndimage import binary_dilation, binary_propagation
+from scipy.ndimage import binary_dilation, binary_erosion, binary_propagation
 from skimage.morphology import local_minima
 from skimage.segmentation import watershed
 
@@ -72,23 +72,21 @@ class DomainData:
     def plotting_surfaces(self) -> list[PolyData]:
         labeled_voxelisation = self._labeled_voxelisation
 
-        binary = labeled_voxelisation == 2
+        surfaces = []
 
-        shell_voxel_candidates = binary & (binary_dilation(~binary, iterations=1))
+        labels = np.unique(labeled_voxelisation)
+        labels = labels[labels != 0]
+        for label in labels:
+            binary = labeled_voxelisation == label
 
-        # Include the six domain boundaries
-        shell_voxel_candidates[0, :, :] |= binary[0, :, :]
-        shell_voxel_candidates[-1, :, :] |= binary[-1, :, :]
-        shell_voxel_candidates[:, 0, :] |= binary[:, 0, :]
-        shell_voxel_candidates[:, -1, :] |= binary[:, -1, :]
-        shell_voxel_candidates[:, :, 0] |= binary[:, :, 0]
-        shell_voxel_candidates[:, :, -1] |= binary[:, :, -1]
+            shell = binary & ~binary_erosion(binary, border_value=0)
 
-        surface = self.binary_to_voxel_surface(binary, shell_voxel_candidates, self.precision)
+            surface = self.binary_to_voxel_surface(binary, shell, self.precision)
+            surface.translate(self.boundaries[0] - self.precision / 2, inplace=True)
 
-        surface.translate(self.boundaries[0] - self.precision / 2, inplace=True)
+            surfaces.append(surface)
 
-        return [surface]
+        return surfaces
 
     @staticmethod
     def _read_ply_bounds(surface_path: Path) -> np.ndarray | None:
@@ -381,6 +379,7 @@ class DomainData:
                 progress.update(task, advance=stop - start)
 
         self._sweep_confidence_field = np.clip(1.0 - distance_field / distance_field.max(), 0, 1)
+        self.__dict__.pop("_labeled_voxelisation", None)
 
     @staticmethod
     def binary_to_voxel_surface(binary: np.ndarray, candidates: np.ndarray, voxel_size: float) -> PolyData:
