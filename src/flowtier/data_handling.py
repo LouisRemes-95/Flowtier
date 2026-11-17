@@ -3,6 +3,7 @@ from pathlib import Path
 import edt
 import igl
 import numpy as np
+import pyvista as pv
 import trimesh
 from numba import njit, prange
 from pyvista import PolyData
@@ -208,6 +209,7 @@ class DomainData:
         if center_lines.ndim != 3 or center_lines.shape[1:] != (2, 3):
             raise UserError(f"Expected an (N, 2, 3) array, got {center_lines.shape}.")
 
+        self._center_lines = center_lines.copy()
         center_lines = (center_lines - self.boundaries[0]) / self._precision
 
         self._build_affine_projection_coefficients(center_lines)
@@ -419,6 +421,90 @@ class DomainData:
         cross_section[i, j] = value
 
         return True
+
+    def compute_sweep_surface(self, cross_section: np.ndarray) -> PolyData:
+        pixels = np.argwhere(cross_section)
+
+        if len(pixels) == 0:
+            return PolyData()
+
+        # Build one square per True pixel
+        corners = pixels[:, None, :] + np.array([[0, 0], [1, 0], [1, 1], [0, 1]])
+
+        points, inverse = np.unique(corners.reshape(-1, 2), axis=0, return_inverse=True)
+
+        points = points.astype(np.float64) - np.array(cross_section.shape) / 2
+
+        vertices = np.column_stack((points, np.zeros(len(points))))
+
+        faces = np.column_stack((np.full(len(pixels), 4), inverse.reshape(-1, 4)))
+
+        cross_section_mesh = PolyData(vertices, faces.ravel())
+
+        # Clipping box: one voxel beyond the domain
+        box_min = self.boundaries[0] - self.precision
+        box_max = self.boundaries[1] + self.precision
+        box_center = (box_min + box_max) / 2
+
+        half_length = np.linalg.norm(box_max - box_min)
+
+        surfaces = []
+        vertical = np.array([0.0, 0.0, 1.0])
+
+        for center_line in self._center_lines:
+            origin = center_line.mean(axis=0)
+
+            direction = center_line[1] - center_line[0]
+            direction /= np.linalg.norm(direction)
+
+            ex = np.cross(vertical, direction)
+
+            if np.linalg.norm(ex) < 1e-8:
+                ex = np.array([1.0, 0.0, 0.0])
+            else:
+                ex /= np.linalg.norm(ex)
+
+            ey = np.cross(direction, ex)
+
+            # Centre the extrusion along the infinite centre line
+            origin += np.dot(box_center - origin, direction) * direction
+
+            # Extrude the exact pixel geometry, including end caps
+            surface = cross_section_mesh.extrude((0, 0, 2 * half_length), capping=True)
+
+            # Transform from local coordinates to physical coordinates
+            coordinates = surface.points.copy()
+
+            surface.points = (
+                origin
+                + coordinates[:, 0, None] * self.precision * ex
+                + coordinates[:, 1, None] * self.precision * ey
+                + (coordinates[:, 2, None] - half_length) * direction
+            )
+
+            surface = surface.triangulate()
+
+            # Clip and cap at each of the six domain boundaries
+            for axis in range(3):
+                for value, sign in ((box_min[axis], 1), (box_max[axis], -1)):
+                    normal = np.zeros(3)
+                    normal[axis] = sign
+
+                    plane_origin = box_center.copy()
+                    plane_origin[axis] = value
+
+                    surface = surface.clip_closed_surface(normal=normal, origin=plane_origin)
+
+                    if surface.n_cells == 0:
+                        break
+
+                if surface.n_cells == 0:
+                    break
+
+            if surface.n_cells:
+                surfaces.append(surface)
+
+        return pv.merge(surfaces, merge_points=False) if surfaces else PolyData()
 
 
 @njit(inline="always")

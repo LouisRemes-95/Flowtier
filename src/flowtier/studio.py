@@ -65,7 +65,7 @@ STYLE_SHEET = f"""
 
 class AppState(QObject):
     cross_section_changed = Signal()
-    sweep_changed = Signal(object)
+    sweep_changed = Signal(object, object)
     computing_changed = Signal(bool)
 
     def __init__(self, domain_data: DomainData) -> None:
@@ -104,14 +104,20 @@ class AppState(QObject):
         self._worker.start()
 
     def _on_sweep_ready(
-        self, revision: int, confidence: np.ndarray, indices: np.ndarray, labels: np.ndarray, surfaces: list[PolyData]
+        self,
+        revision: int,
+        confidence: np.ndarray,
+        indices: np.ndarray,
+        labels: np.ndarray,
+        surfaces: list[PolyData],
+        sweep_surface: PolyData,
     ) -> None:
         if revision != self._revision:
             return
 
         self._domain_data.apply_sweep_dependencies(confidence, indices, labels)
 
-        self.sweep_changed.emit(surfaces)
+        self.sweep_changed.emit(surfaces, sweep_surface)
 
     def _on_sweep_failed(self, message: str) -> None:
         console.print(f"[red]Sweep computation failed: {message}[/red]")
@@ -222,9 +228,11 @@ class FlowtierStudio(QMainWindow):
                 (self._3d_plotter.height() - self._computing_indicator.height()) // 2,
             )
 
-    def _update_3d_view(self, surfaces: list[PolyData]) -> None:
+    def _update_3d_view(self, surfaces: list[PolyData], sweep_surface: PolyData) -> None:
         for actor in getattr(self, "_surface_actors", []):
             self._3d_plotter.remove_actor(actor, render=False)
+
+        self._3d_plotter.remove_actor("sweep_surface", render=False)
 
         self._surface_actors = []
 
@@ -232,8 +240,20 @@ class FlowtierStudio(QMainWindow):
             actor = self._3d_plotter.add_mesh(
                 surface, color=cc.glasbey[i % len(cc.glasbey)], show_edges=False, smooth_shading=False, render=False
             )
-
             self._surface_actors.append(actor)
+
+        if sweep_surface.n_cells:
+            self._3d_plotter.add_mesh(
+                sweep_surface,
+                name="sweep_surface",
+                color="white",
+                style="surface",
+                opacity=0.5,
+                show_edges=False,
+                smooth_shading=False,
+                lighting=False,
+                render=False,
+            )
 
         self._3d_plotter.render()
 
@@ -652,7 +672,7 @@ class CrossSectionSketcher(QGraphicsView):
 
 
 class SweepWorker(QThread):
-    result_ready = Signal(int, object, object, object, object)
+    result_ready = Signal(int, object, object, object, object, object)
     failed = Signal(str)
 
     def __init__(self, domain_data: DomainData, cross_section: np.ndarray, revision: int) -> None:
@@ -664,9 +684,10 @@ class SweepWorker(QThread):
 
     def run(self) -> None:
         try:
-            results = self._domain_data.compute_segmentation(self._cross_section)
+            confidence, indices, labels, surfaces = self._domain_data.compute_segmentation(self._cross_section)
+            sweep_surface = self._domain_data.compute_sweep_surface(self._cross_section)
 
-            self.result_ready.emit(self._revision, *results)
+            self.result_ready.emit(self._revision, confidence, indices, labels, surfaces, sweep_surface)
 
         except Exception as exc:
             self.failed.emit(str(exc))
