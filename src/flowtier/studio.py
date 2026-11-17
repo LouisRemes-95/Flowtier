@@ -734,7 +734,9 @@ class LoadingSpinner(QWidget):
 
 def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
     with console.status("Building domain data..."):
-        domain_data = DomainData(app_config.surface_path, app_config.center_lines_path, alg_config.precision)
+        domain_data = DomainData(
+            app_config.surface_path, app_config.center_lines_path, alg_config.precision, np.array([0, 1.0, 0])
+        )
 
     for warning in domain_data.warnings:
         console.print(warning)

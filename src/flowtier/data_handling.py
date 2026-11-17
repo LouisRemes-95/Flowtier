@@ -8,7 +8,7 @@ import trimesh
 from numba import njit, prange
 from pyvista import PolyData
 from rich.progress import BarColumn, Progress, TextColumn
-from scipy.ndimage import binary_dilation, binary_erosion, binary_propagation
+from scipy.ndimage import binary_dilation, binary_erosion, binary_propagation, label
 from skimage.morphology import local_minima
 from skimage.segmentation import watershed
 
@@ -16,13 +16,16 @@ from flowtier.common import UserError, console
 
 
 class DomainData:
-    def __init__(self, surface_path: Path, center_lines_path: Path, precision: float) -> None:
+    def __init__(
+        self, surface_path: Path, center_lines_path: Path, precision: float, build_direction: np.ndarray
+    ) -> None:
         self.warnings: list[str] = []
 
         if precision <= 0:
             raise UserError("precision must be positive.")
         self._precision = precision
 
+        self._set_build_direction(build_direction)
         self._set_and_adjust_boundaries(surface_path)
         self._build_void_confidence_field(surface_path, subdivisions=2, chunk_size=1_000_000)
         self._build_initial_cross_section()
@@ -43,6 +46,16 @@ class DomainData:
     @property
     def cross_section(self) -> np.ndarray:
         return self._cross_section
+
+    def _set_build_direction(self, build_direction: np.ndarray):
+        self._build_direction = np.asarray(build_direction, dtype=np.float64)
+
+        norm = np.linalg.norm(self._build_direction)
+
+        if not np.isfinite(norm) or norm < 1e-12:
+            raise ValueError("Build direciton must be finite and nonzero vector.")
+
+        self._build_direction /= norm
 
     @staticmethod
     def _read_ply_bounds(surface_path: Path) -> np.ndarray | None:
@@ -226,29 +239,35 @@ class DomainData:
 
         directions /= norms[:, None]
 
-        vertical = np.array([0.0, 0.0, 1.0], dtype=np.float32)
-        ex = np.cross(vertical, directions)
+        ex, ey = self._compute_local_basis(directions)
 
-        norms_ex = np.linalg.norm(ex, axis=1)
-        is_vertical = norms_ex <= np.finfo(np.float32).eps
-
-        ex[is_vertical] = [1.0, 0.0, 0.0]
-        ex[~is_vertical] /= norms_ex[~is_vertical, None]
-
-        ey = np.cross(directions, ex)
-
-        # Affine coefficients: a0, ax, ay, b0, bx, by, bz
+        # Affine coefficients: a0, ax, ay, az, b0, bx, by, bz
         self._affine_projection_coefficients = np.column_stack(
             (
                 -np.sum(origins * ex, axis=1),
                 ex[:, 0],
                 ex[:, 1],
+                ex[:, 2],
                 -np.sum(origins * ey, axis=1),
                 ey[:, 0],
                 ey[:, 1],
                 ey[:, 2],
             )
         ).astype(np.float32)
+
+    def _compute_local_basis(self, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        ey = self._build_direction - (np.sum(directions * self._build_direction, axis=1, keepdims=True) * directions)
+
+        norms = np.linalg.norm(ey, axis=1)
+
+        if np.any(norms < 1e-3):
+            raise ValueError("A centerline direction is too close to the vertical vector.")
+
+        ey /= norms[:, None]
+
+        ex = np.cross(ey, directions)
+
+        return ex, ey
 
     def _build_nearest_centerline_indices(self, chunk_size: int = 1_000_000) -> None:
         coefficients = self._affine_projection_coefficients
@@ -423,23 +442,30 @@ class DomainData:
         return True
 
     def compute_sweep_surface(self, cross_section: np.ndarray) -> PolyData:
-        pixels = np.argwhere(cross_section)
+        structure = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
 
-        if len(pixels) == 0:
+        components, n_components = label(cross_section, structure=structure)
+
+        if n_components == 0:
             return PolyData()
 
-        # Build one square per True pixel
-        corners = pixels[:, None, :] + np.array([[0, 0], [1, 0], [1, 1], [0, 1]])
+        cross_section_meshes = []
 
-        points, inverse = np.unique(corners.reshape(-1, 2), axis=0, return_inverse=True)
+        for component_id in range(1, n_components + 1):
+            pixels = np.argwhere(components == component_id)
 
-        points = points.astype(np.float64) - np.array(cross_section.shape) / 2
+            # Build one square per True pixel
+            corners = pixels[:, None, :] + np.array([[0, 0], [1, 0], [1, 1], [0, 1]])
 
-        vertices = np.column_stack((points, np.zeros(len(points))))
+            points, inverse = np.unique(corners.reshape(-1, 2), axis=0, return_inverse=True)
 
-        faces = np.column_stack((np.full(len(pixels), 4), inverse.reshape(-1, 4)))
+            points = points.astype(np.float64) - np.array(cross_section.shape) / 2
 
-        cross_section_mesh = PolyData(vertices, faces.ravel())
+            vertices = np.column_stack((points, np.zeros(len(points))))
+
+            faces = np.column_stack((np.full(len(pixels), 4), inverse.reshape(-1, 4)))
+
+            cross_section_meshes.append(PolyData(vertices, faces.ravel()))
 
         # Clipping box: one voxel beyond the domain
         box_min = self.boundaries[0] - self.precision
@@ -449,7 +475,6 @@ class DomainData:
         half_length = np.linalg.norm(box_max - box_min)
 
         surfaces = []
-        vertical = np.array([0.0, 0.0, 1.0])
 
         for center_line in self._center_lines:
             origin = center_line.mean(axis=0)
@@ -457,52 +482,54 @@ class DomainData:
             direction = center_line[1] - center_line[0]
             direction /= np.linalg.norm(direction)
 
-            ex = np.cross(vertical, direction)
-
-            if np.linalg.norm(ex) < 1e-8:
-                ex = np.array([1.0, 0.0, 0.0])
-            else:
-                ex /= np.linalg.norm(ex)
-
-            ey = np.cross(direction, ex)
+            # Use the same local basis as the sweep distance calculation
+            ex, ey = self._compute_local_basis(direction[None, :])
+            ex, ey = ex[0], ey[0]
 
             # Centre the extrusion along the infinite centre line
             origin += np.dot(box_center - origin, direction) * direction
 
-            # Extrude the exact pixel geometry, including end caps
-            surface = cross_section_mesh.extrude((0, 0, 2 * half_length), capping=True)
+            for cross_section_mesh in cross_section_meshes:
+                # Extrude the exact pixel geometry, including end caps
+                surface = cross_section_mesh.extrude((0, 0, 2 * half_length), capping=True).triangulate().clean()
 
-            # Transform from local coordinates to physical coordinates
-            coordinates = surface.points.copy()
+                if not surface.is_manifold or surface.n_open_edges:
+                    raise ValueError(
+                        "The swept cross-section is not a closed manifold. Check for pixel regions touching at corners."
+                    )
 
-            surface.points = (
-                origin
-                + coordinates[:, 0, None] * self.precision * ex
-                + coordinates[:, 1, None] * self.precision * ey
-                + (coordinates[:, 2, None] - half_length) * direction
-            )
+                # Transform from local coordinates to physical coordinates
+                coordinates = surface.points.copy()
 
-            surface = surface.triangulate()
+                surface.points = (
+                    origin
+                    + coordinates[:, 0, None] * self.precision * ex
+                    + coordinates[:, 1, None] * self.precision * ey
+                    + (coordinates[:, 2, None] - half_length) * direction
+                )
 
-            # Clip and cap at each of the six domain boundaries
-            for axis in range(3):
-                for value, sign in ((box_min[axis], 1), (box_max[axis], -1)):
-                    normal = np.zeros(3)
-                    normal[axis] = sign
+                # Clip and cap at each of the six domain boundaries
+                for axis in range(3):
+                    for value, sign in ((box_min[axis], 1), (box_max[axis], -1)):
+                        normal = np.zeros(3)
+                        normal[axis] = sign
 
-                    plane_origin = box_center.copy()
-                    plane_origin[axis] = value
+                        plane_origin = box_center.copy()
+                        plane_origin[axis] = value
 
-                    surface = surface.clip_closed_surface(normal=normal, origin=plane_origin)
+                        surface = surface.clip_closed_surface(
+                            normal=normal,
+                            origin=plane_origin,
+                        )
+
+                        if surface.n_cells == 0:
+                            break
 
                     if surface.n_cells == 0:
                         break
 
-                if surface.n_cells == 0:
-                    break
-
-            if surface.n_cells:
-                surfaces.append(surface)
+                if surface.n_cells:
+                    surfaces.append(surface)
 
         return pv.merge(surfaces, merge_points=False) if surfaces else PolyData()
 
@@ -544,9 +571,9 @@ def _find_closest_center_lines(start: int, coefficients: np.ndarray, output: np.
         best_indices = np.full(n_closest, -1, dtype=np.int32)
 
         for line in range(n_lines):
-            a0, ax, ay, b0, bx, by, bz = coefficients[line]
+            a0, ax, ay, az, b0, bx, by, bz = coefficients[line]
 
-            u = a0 + ax * i + ay * j
+            u = a0 + ax * i + ay * j + az * k
             v = b0 + bx * i + by * j + bz * k
 
             distance_squared = u * u + v * v
@@ -589,9 +616,9 @@ def _compute_minimum_distance(
         for c in range(closest_lines.shape[1]):
             line = closest_lines[p, c]
 
-            a0, ax, ay, b0, bx, by, bz = coefficients[line]
+            a0, ax, ay, az, b0, bx, by, bz = coefficients[line]
 
-            u = a0 + ax * i + ay * j
+            u = a0 + ax * i + ay * j + az * k
             v = b0 + bx * i + by * j + bz * k
 
             distance = _bilinear_interpolate(distance_field, u, v)
