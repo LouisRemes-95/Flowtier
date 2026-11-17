@@ -176,10 +176,7 @@ class DomainData:
             pitch = self._precision
 
             edge_factor = 1.1
-            max_iter = max(
-                0,
-                int(np.ceil(np.log2(edge_lengths.max() * edge_factor / pitch))),
-            )
+            max_iter = max(0, int(np.ceil(np.log2(edge_lengths.max() * edge_factor / pitch)))) + 2
 
             voxel_grid = shifted_mesh.voxelized(
                 pitch=pitch,
@@ -256,7 +253,7 @@ class DomainData:
         if center_lines.ndim != 3 or center_lines.shape[1:] != (2, 3):
             raise UserError(f"Expected an (N, 2, 3) array, got {center_lines.shape}.")
 
-        # center_lines = (center_lines - self.boundaries[0]) / self._precision
+        center_lines = (center_lines - self.boundaries[0]) / self._precision
 
         self._build_affine_projection_coefficients(center_lines)
         self._build_nearest_centerline_indices()
