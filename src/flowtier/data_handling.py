@@ -305,9 +305,9 @@ class DomainData:
         self, cross_section: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[PolyData]]:
 
-        confidence, indices = self.compute_sweep_dependencies(cross_section)
-        labels = self.compute_labeled_voxelisation(confidence, indices)
-        surfaces = self.compute_plotting_surfaces(labels)
+        confidence, indices = self._compute_sweep_dependencies(cross_section)
+        labels = self._compute_labeled_voxelisation(confidence, indices)
+        surfaces = self._compute_plotting_surfaces(labels)
 
         return confidence, indices, labels, surfaces
 
@@ -318,7 +318,7 @@ class DomainData:
         self._nearest_sweep_indices = nearest_indices
         self._labeled_voxelisation = labels
 
-    def compute_sweep_dependencies(
+    def _compute_sweep_dependencies(
         self, cross_section: np.ndarray, chunk_size: int = 1_000_000
     ) -> tuple[np.ndarray, np.ndarray]:
         shape = tuple(self._grid_shape)
@@ -358,7 +358,7 @@ class DomainData:
 
         return confidence_field, nearest_indices
 
-    def compute_labeled_voxelisation(
+    def _compute_labeled_voxelisation(
         self, sweep_confidence_field: np.ndarray, nearest_sweep_indices: np.ndarray, power: int = 4
     ) -> np.ndarray:
         segmentation_field = self._void_confidence_field**power - sweep_confidence_field**power
@@ -373,7 +373,7 @@ class DomainData:
 
         return watershed(segmentation_field, markers=markers, mask=mask)
 
-    def compute_plotting_surfaces(self, labeled_voxelisation: np.ndarray) -> list[PolyData]:
+    def _compute_plotting_surfaces(self, labeled_voxelisation: np.ndarray) -> list[PolyData]:
         surfaces = []
 
         labels = np.unique(labeled_voxelisation)

@@ -12,6 +12,7 @@ from PySide6.QtCore import (
     QRectF,
     Qt,
     QThread,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import (
@@ -19,6 +20,7 @@ from PySide6.QtGui import (
     QColor,
     QImage,
     QMouseEvent,
+    QPainter,
     QPainterPath,
     QPen,
     QPixmap,
@@ -31,7 +33,6 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QHBoxLayout,
     QMainWindow,
-    QProgressBar,
     QWidget,
 )
 from pyvista import PolyData
@@ -195,15 +196,31 @@ class FlowtierStudio(QMainWindow):
         self._3d_plotter.reset_camera()
         self._3d_plotter.camera.zoom(1 / 1.5)
 
-        self._computing_indicator = QProgressBar(self._3d_plotter)
-        self._computing_indicator.setRange(0, 0)
-        self._computing_indicator.setTextVisible(False)
-        self._computing_indicator.setFixedSize(120, 12)
-        self._computing_indicator.move(15, 15)
-        self._computing_indicator.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._computing_indicator = LoadingSpinner(self._3d_plotter)
+        self._computing_indicator.move(
+            (self._3d_plotter.width() - self._computing_indicator.width()) // 2,
+            (self._3d_plotter.height() - self._computing_indicator.height()) // 2,
+        )
         self._computing_indicator.hide()
 
         return self._3d_plotter
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+
+        self._computing_indicator.move(
+            (self._3d_plotter.width() - self._computing_indicator.width()) // 2,
+            (self._3d_plotter.height() - self._computing_indicator.height()) // 2,
+        )
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+
+        if hasattr(self, "_computing_indicator"):
+            self._computing_indicator.move(
+                (self._3d_plotter.width() - self._computing_indicator.width()) // 2,
+                (self._3d_plotter.height() - self._computing_indicator.height()) // 2,
+            )
 
     def _update_3d_view(self, surfaces: list[PolyData]) -> None:
         for actor in getattr(self, "_surface_actors", []):
@@ -653,6 +670,45 @@ class SweepWorker(QThread):
 
         except Exception as exc:
             self.failed.emit(str(exc))
+
+
+class LoadingSpinner(QWidget):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+
+        self.setFixedSize(48, 48)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+        self._angle = 0
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._rotate)
+
+    def _rotate(self) -> None:
+        self._angle = (self._angle + 10) % 360
+        self.update()
+
+    def setVisible(self, visible: bool) -> None:
+        super().setVisible(visible)
+
+        if visible:
+            self._timer.start(16)
+        else:
+            self._timer.stop()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        pen = QPen(QColor("#a3eaff"), 4)
+        pen.setCapStyle(Qt.RoundCap)
+
+        painter.setPen(pen)
+        painter.drawArc(
+            self.rect().adjusted(6, 6, -6, -6),
+            self._angle * 16,
+            270 * 16,
+        )
 
 
 def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
