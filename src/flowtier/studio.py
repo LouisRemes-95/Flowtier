@@ -147,6 +147,7 @@ class AlgConfig:
 class AppConfig:
     surface_path: Path
     center_lines_path: Path
+    cross_section_path: Path
     output_path: Path
     mode: Mode
     autosave_interval_ms: int = 500

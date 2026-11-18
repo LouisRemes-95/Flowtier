@@ -390,6 +390,7 @@ class DomainData:
 
         _, inverse = np.unique(nearest_sweep_indices[minima], return_inverse=True)
         markers[minima] = inverse + 1
+        print(segmentation_field.shape)
 
         return watershed(segmentation_field, markers=markers, mask=mask, connectivity=3)
 
