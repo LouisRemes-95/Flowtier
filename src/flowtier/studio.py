@@ -1,6 +1,7 @@
 import sys
 from dataclasses import dataclass
 from enum import StrEnum
+from functools import partial
 from pathlib import Path
 from typing import Final
 
@@ -40,7 +41,7 @@ from pyvistaqt import QtInteractor
 from rich.live import Live
 from rich.text import Text
 
-from flowtier.common import console
+from flowtier.common import UserError, console
 from flowtier.data_handling import DomainData
 
 BACKGROUND_COLOR = QColor("#383838")
@@ -70,6 +71,7 @@ class AppState(QObject):
 
     def __init__(self, domain_data: DomainData) -> None:
         super().__init__()
+
         self._domain_data = domain_data
 
         self._worker = None
@@ -84,6 +86,9 @@ class AppState(QObject):
         if self._domain_data.paint_cross_section(i, j, value):
             self._revision += 1
             self.cross_section_changed.emit()
+
+    def save_cross_section(self, path: Path) -> None:
+        np.savez_compressed(path, cross_section=self.domain_data.cross_section)
 
     def update_sweep(self) -> None:
         self._pending = True
@@ -131,6 +136,23 @@ class AppState(QObject):
         else:
             self.computing_changed.emit(False)
 
+    @classmethod
+    def build(cls, domain_data: DomainData, app_config: "AppConfig") -> tuple["AppState", "Mode"]:
+        app_state = cls(domain_data)
+        mode = app_config.mode
+
+        if app_config.mode != Mode.RESET and app_config.cross_section_path.is_file():
+            with np.load(app_config.cross_section_path) as data:
+                if len(data.files) != 1:
+                    raise UserError("The .npz file must contain exactly one array.")
+
+                app_state.domain_data.set_cross_section(data[data.files[0]].astype(np.bool))
+
+        else:
+            mode = Mode.RESET
+
+        return app_state, mode
+
 
 class Mode(StrEnum):
     RESET = "reset"
@@ -160,10 +182,22 @@ class FlowtierStudio(QMainWindow):
         self.app_state = app_state
         self._app_config = app_config
 
+        self._build_save_connections()
+
         self._build_ui()
         self._build_connections()
 
         self.app_state.update_sweep()
+
+    def _build_save_connections(self) -> None:
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(self._app_config.autosave_interval_ms)
+        self._save_timer.timeout.connect(
+            partial(self.app_state.save_cross_section, self._app_config.cross_section_path)
+        )
+
+        self.app_state.cross_section_changed.connect(self._save_timer.start)
 
     def _build_ui(self) -> None:
         self.setWindowTitle("Flowtier")
@@ -744,17 +778,30 @@ def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
 
     console.print("[green]✔ Domain data built[/green]")
 
-    app = QApplication.instance() or QApplication(sys.argv)
-    app.setStyleSheet(STYLE_SHEET)
+    with console.status("Building AppState..."):
+        app_state, mode = AppState.build(domain_data, app_config)
 
-    with Live(Text.from_markup("Opening Flowtier Studio..."), console=console, transient=True):
-        window = FlowtierStudio(AppState(domain_data), app_config)
-        window.show()
-        exit_code = app.exec()
+    if app_config.mode != mode:
+        console.print(
+            f"[bold yellow]⚠ Warning:[/bold yellow] "
+            f"Cross-section file not found: {app_config.cross_section_path}.\n"
+            f"Starting in {mode} mode instead of {app_config.mode} mode"
+        )
 
-    if exit_code != 0:
-        return exit_code
+    console.print("[green]✔ AppState built[/green]")
 
-    console.print("[green]✔ Segmentation handling complete[/green]")
+    if mode != Mode.SILENT:
+        app = QApplication.instance() or QApplication(sys.argv)
+        app.setStyleSheet(STYLE_SHEET)
+
+        with Live(Text.from_markup("Opening Flowtier Studio..."), console=console, transient=True):
+            window = FlowtierStudio(app_state, app_config)
+            window.show()
+            exit_code = app.exec()
+
+        if exit_code != 0:
+            return exit_code
+
+        console.print("[green]✔ Segmentation handling complete[/green]")
 
     return 0

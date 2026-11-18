@@ -135,7 +135,7 @@ def main() -> int:
     try:
         surface_path = resolve_surface_path(args.surface_path)
         centerlines_path = resolve_centerlines_path(args.centerlines_path)
-        cross_section_path = resolve_cross_section_path(args.cross_section_path)
+        cross_section_path = resolve_cross_section_path(args.cross_section_path, args.centerlines_path.parent)
         output_path = resolve_output(surface_path, args.output_dir, args.name)
 
         app_config = AppConfig(surface_path, centerlines_path, cross_section_path, output_path, args.mode)
