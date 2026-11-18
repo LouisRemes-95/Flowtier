@@ -46,6 +46,20 @@ class DomainData:
     def cross_section(self) -> np.ndarray:
         return self._cross_section
 
+    @property
+    def cropped_cross_section(self) -> np.ndarray:
+        cross_section = self.cross_section
+        rows = np.flatnonzero(cross_section.any(axis=1))
+        cols = np.flatnonzero(cross_section.any(axis=0))
+
+        if not len(rows) or not len(cols):
+            return cross_section
+
+        top = min(rows[0], cross_section.shape[0] - 1 - rows[-1])
+        left = min(cols[0], cross_section.shape[1] - 1 - cols[-1])
+
+        return cross_section[top : cross_section.shape[0] - top, left : cross_section.shape[1] - left]
+
     def _set_build_direction(self, build_direction: np.ndarray):
         self._build_direction = np.asarray(build_direction, dtype=np.float64)
 
@@ -444,7 +458,17 @@ class DomainData:
         return True
 
     def set_cross_section(self, cross_section: np.ndarray) -> None:
-        self._cross_section = cross_section.copy()
+        slices = tuple(
+            slice(max(0, (s - t) // 2), max(0, (s - t) // 2) + min(s, t))
+            for s, t in zip(cross_section.shape, self._cross_section.shape, strict=True)
+        )
+        cross_section = cross_section[slices]
+
+        padding = [
+            ((t - s) // 2, (t - s + 1) // 2)
+            for s, t in zip(cross_section.shape, self._cross_section.shape, strict=True)
+        ]
+        self._cross_section = np.pad(cross_section, padding)
 
     def compute_sweep_surface(self, cross_section: np.ndarray) -> PolyData:
         pixels = np.argwhere(cross_section)

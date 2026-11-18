@@ -88,7 +88,7 @@ class AppState(QObject):
             self.cross_section_changed.emit()
 
     def save_cross_section(self, path: Path) -> None:
-        np.savez_compressed(path, cross_section=self.domain_data.cross_section)
+        np.savez_compressed(path, cross_section=self.domain_data.cropped_cross_section)
 
     def update_sweep(self) -> None:
         self._pending = True
