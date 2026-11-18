@@ -289,7 +289,7 @@ class FlowtierStudio(QMainWindow):
                 name="sweep_surface",
                 color="white",
                 style="surface",
-                opacity=0.5,
+                opacity=0.2,
                 show_edges=False,
                 smooth_shading=False,
                 lighting=False,

@@ -498,8 +498,8 @@ class DomainData:
 
         pixels = pixels - (np.array(cross_section.shape) - 1) / 2
 
-        box_min = self.boundaries[0] - self.precision
-        box_max = self.boundaries[1] + self.precision
+        box_min = self.boundaries[0] - 2 * self.precision
+        box_max = self.boundaries[1] + 2 * self.precision
         box_center = (box_min + box_max) / 2
 
         half_width = self.precision / 2
