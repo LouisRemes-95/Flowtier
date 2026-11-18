@@ -1,6 +1,6 @@
 [project]
 name = "flowtier"
-version = "0.1.0"
+version = "1.0.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -12,14 +12,15 @@ dependencies = [
     "edt>=3.1.2",
     "libigl>=2.6.3",
     "numba>=0.68.1",
-    "numpy>=2.5.4",
+    "numpy>=2.5.5",
     "pyside6>=6.12.0",
     "pyvista>=0.49.2",
     "pyvistaqt>=0.13.2",
     "rich>=15.0.0",
     "rich-argparse>=1.8.0",
     "scikit-image>=0.26.0",
-    "trimesh>=5.1.1",
+    "scipy>=1.18.1",
+    "trimesh>=5.2.1",
 ]
 
 [project.scripts]

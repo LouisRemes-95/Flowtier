@@ -20,8 +20,8 @@ class DomainData:
     ) -> None:
         self.warnings: list[str] = []
 
-        if precision <= 0:
-            raise UserError("precision must be positive.")
+        if not np.isfinite(precision) or precision <= 0:
+            raise UserError("Precision must be finite and positive.")
         self._precision = precision
 
         self._set_build_direction(build_direction)
@@ -403,9 +403,12 @@ class DomainData:
         mask = self._void_confidence_field < 1
         minima = local_minima(segmentation_field, connectivity=3) & mask
 
-        markers = np.zeros(minima.shape, dtype=np.uint16)
+        unique, inverse = np.unique(nearest_sweep_indices[minima], return_inverse=True)
 
-        _, inverse = np.unique(nearest_sweep_indices[minima], return_inverse=True)
+        if len(unique) > np.iinfo(np.uint16).max:
+            raise ValueError("Too many watershed markers for uint16.")
+
+        markers = np.zeros(minima.shape, dtype=np.uint16)
         markers[minima] = inverse + 1
 
         labeled_voxelisation = watershed(segmentation_field, markers=markers, mask=mask, connectivity=3)

@@ -32,7 +32,6 @@ def build_parser() -> RichArgumentParser:
     parser.add_argument(
         "surface_path",
         type=Path,
-        default=None,
         help="Path to the input triangulation in a .ply file, representing the solid-void interface",
     )
     parser.add_argument(
@@ -40,28 +39,24 @@ def build_parser() -> RichArgumentParser:
         "--centerlines-path",
         type=Path,
         required=True,
-        default=None,
         help="Path to the filament center lines in a .npz file",
     )
     parser.add_argument(
         "-cs",
         "--cross-section-path",
         type=Path,
-        default=None,
         help="Path to a cross section in a .npz file",
     )
     parser.add_argument(
         "-o",
         "--output-dir",
         type=Path,
-        default=None,
         help="Path to the directory where outputs should be saved",
     )
     parser.add_argument(
         "-n",
         "--name",
         type=str,
-        default=None,
         help="Name of the output file without suffix",
     )
     parser.add_argument(
@@ -82,30 +77,20 @@ def build_parser() -> RichArgumentParser:
     return parser
 
 
-def resolve_surface_path(surface_path: Path) -> Path:
-    surface_path = surface_path.resolve()
-    if not surface_path.exists() or not surface_path.is_file():
-        raise UserError("surface-path must be an existing file")
+def resolve_input_path(path: Path, name: str) -> Path:
+    path = path.resolve()
 
-    return surface_path
+    if not path.is_file():
+        raise UserError(f"{name} must be an existing file: {path}")
 
-
-def resolve_centerlines_path(centerlines_path: Path) -> Path:
-    centerlines_path = centerlines_path.resolve()
-    if not centerlines_path.exists() or not centerlines_path.is_file():
-        raise UserError("center-lines-path must be an existing file")
-
-    return centerlines_path
+    return path
 
 
-def resolve_cross_section_path(cross_section_path: Path, fallback_dir: Path) -> Path:
-    cross_section_path = (cross_section_path or fallback_dir / "cross_section").resolve()
+def resolve_cross_section_path(path: Path | None, fallback_dir: Path) -> Path:
+    path = (path or fallback_dir / "cross_section").resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
 
-    cross_section_path.parent.mkdir(parents=True, exist_ok=True)
-
-    return cross_section_path.with_name(
-        cross_section_path.name.removesuffix("".join(cross_section_path.suffixes)) + ".npz"
-    )
+    return path.with_name(path.name.split(".")[0] + ".npz")
 
 
 def resolve_output(input_path: Path, output_dir: Path | None, name: str | None) -> Path:
@@ -116,7 +101,7 @@ def resolve_output(input_path: Path, output_dir: Path | None, name: str | None) 
     if name is None:
         name = input_path.name.removesuffix("".join(input_path.suffixes))
 
-    return (output_dir / name).with_suffix(".npz")
+    return output_dir / f"{name}.npz"
 
 
 def main() -> int:
@@ -133,8 +118,8 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        surface_path = resolve_surface_path(args.surface_path)
-        centerlines_path = resolve_centerlines_path(args.centerlines_path)
+        surface_path = resolve_input_path(args.surface_path, "Surface")
+        centerlines_path = resolve_input_path(args.centerlines_path, "Centerlines")
         cross_section_path = resolve_cross_section_path(args.cross_section_path, args.centerlines_path.parent)
         output_path = resolve_output(surface_path, args.output_dir, args.name)
 

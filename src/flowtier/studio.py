@@ -18,6 +18,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QBrush,
+    QCloseEvent,
     QColor,
     QImage,
     QMouseEvent,
@@ -77,6 +78,10 @@ class AppState(QObject):
         self._worker = None
         self._pending = False
         self._revision = 0
+
+    @property
+    def is_computing(self) -> bool:
+        return self._worker is not None or self._pending
 
     @property
     def domain_data(self) -> DomainData:
@@ -184,6 +189,7 @@ class AppConfig:
 class FlowtierStudio(QMainWindow):
     def __init__(self, app_state: AppState, app_config: AppConfig) -> None:
         super().__init__()
+        self._closing = False
 
         self.app_state = app_state
         self._app_config = app_config
@@ -223,7 +229,13 @@ class FlowtierStudio(QMainWindow):
 
     def _build_connections(self) -> None:
         self.app_state.sweep_changed.connect(self._update_3d_view)
-        self.app_state.computing_changed.connect(self._computing_indicator.setVisible)
+        self.app_state.computing_changed.connect(self._on_computing_changed)
+
+    def _on_computing_changed(self, computing: bool) -> None:
+        self._computing_indicator.setVisible(computing)
+
+        if self._closing and not computing:
+            self.close()
 
     def _build_3d_view(self) -> QWidget:
         self._3d_plotter = QtInteractor()
@@ -268,6 +280,18 @@ class FlowtierStudio(QMainWindow):
                 (self._3d_plotter.width() - self._computing_indicator.width()) // 2,
                 (self._3d_plotter.height() - self._computing_indicator.height()) // 2,
             )
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._save_timer.isActive():
+            self._save_timer.stop()
+            self.app_state.save_cross_section(self._app_config.cross_section_path)
+
+        if self.app_state.is_computing:
+            self._closing = True
+            event.ignore()
+            return
+
+        super().closeEvent(event)
 
     def _update_3d_view(self, surfaces: list[PolyData], sweep_surface: PolyData) -> None:
         for actor in getattr(self, "_surface_actors", []):
