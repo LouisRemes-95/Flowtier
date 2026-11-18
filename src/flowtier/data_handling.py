@@ -396,7 +396,7 @@ class DomainData:
         return confidence_field, nearest_indices
 
     def _compute_labeled_voxelisation(
-        self, sweep_confidence_field: np.ndarray, nearest_sweep_indices: np.ndarray, power: int = 4
+        self, sweep_confidence_field: np.ndarray, nearest_sweep_indices: np.ndarray, power: int = 3
     ) -> np.ndarray:
         segmentation_field = self._void_confidence_field**power - sweep_confidence_field**power
 
@@ -408,7 +408,24 @@ class DomainData:
         _, inverse = np.unique(nearest_sweep_indices[minima], return_inverse=True)
         markers[minima] = inverse + 1
 
-        return watershed(segmentation_field, markers=markers, mask=mask, connectivity=3)
+        labeled_voxelisation = watershed(segmentation_field, markers=markers, mask=mask, connectivity=3)
+
+        return self.majority_smoothing(labeled_voxelisation, mask)
+
+    @staticmethod
+    def majority_smoothing(
+        labels: np.ndarray, mask: np.ndarray, threshold: float = 0.6, max_iterations: int = 5
+    ) -> np.ndarray:
+
+        for _ in range(max_iterations):
+            smoothed = _majority_step(labels, mask, threshold)
+
+            if np.array_equal(labels, smoothed):
+                break
+
+            labels = smoothed
+
+        return labels
 
     def _compute_plotting_surfaces(self, labeled_voxelisation: np.ndarray) -> list[PolyData]:
         surfaces = []
@@ -738,3 +755,60 @@ def _build_candidate_faces(binary, indices, offsets, voxel_size, corners, vertic
                 faces[face_id, c + 1] = base + c
 
             face_id += 1
+
+
+@njit(parallel=True)
+def _majority_step(labels, mask, threshold):
+    nx, ny, nz = labels.shape
+    result = np.zeros_like(labels)
+
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                if not mask[i, j, k]:
+                    continue
+
+                values = np.empty(27, dtype=np.int32)
+                counts = np.zeros(27, dtype=np.int32)
+                n_unique = 0
+                n_valid = 0
+
+                for di in range(-1, 2):
+                    for dj in range(-1, 2):
+                        for dk in range(-1, 2):
+                            x = min(max(i + di, 0), nx - 1)
+                            y = min(max(j + dj, 0), ny - 1)
+                            z = min(max(k + dk, 0), nz - 1)
+
+                            label = labels[x, y, z]
+                            if label == 0:
+                                continue
+
+                            n_valid += 1
+
+                            found = False
+                            for n in range(n_unique):
+                                if values[n] == label:
+                                    counts[n] += 1
+                                    found = True
+                                    break
+
+                            if not found:
+                                values[n_unique] = label
+                                counts[n_unique] = 1
+                                n_unique += 1
+
+                winner = labels[i, j, k]
+                max_count = 0
+
+                for n in range(n_unique):
+                    if counts[n] > max_count or (counts[n] == max_count and values[n] < winner):
+                        winner = values[n]
+                        max_count = counts[n]
+
+                if n_valid > 0 and max_count / n_valid >= threshold:
+                    result[i, j, k] = winner
+                else:
+                    result[i, j, k] = labels[i, j, k]
+
+    return result
