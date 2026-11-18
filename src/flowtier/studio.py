@@ -90,6 +90,12 @@ class AppState(QObject):
     def save_cross_section(self, path: Path) -> None:
         np.savez_compressed(path, cross_section=self.domain_data.cropped_cross_section)
 
+    def update_segmentation(self) -> None:
+        self.domain_data.update_segmentation()
+
+    def save_segmentation(self, path: Path) -> None:
+        self.domain_data.save_segmentation(path)
+
     def update_sweep(self) -> None:
         self._pending = True
 
@@ -790,7 +796,10 @@ def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
 
     console.print("[green]✔ AppState built[/green]")
 
-    if mode != Mode.SILENT:
+    if mode == Mode.SILENT:
+        app_state.update_segmentation()
+
+    else:
         app = QApplication.instance() or QApplication(sys.argv)
         app.setStyleSheet(STYLE_SHEET)
 
@@ -803,5 +812,14 @@ def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
             return exit_code
 
         console.print("[green]✔ Segmentation handling complete[/green]")
+
+    with console.status("Writing outputs..."):
+        app_state.save_segmentation(app_config.output_path)
+
+    try:
+        rel = app_config.output_path.relative_to(Path.cwd())
+    except ValueError:
+        rel = app_config.output_path  # fallback to absolute path
+    console.print(f"💾 Wrote labelled voxelisation to {rel}", highlight=False)
 
     return 0

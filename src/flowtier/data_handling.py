@@ -335,6 +335,9 @@ class DomainData:
         confidence, indices, labels, _ = self.compute_segmentation(self.cross_section.copy())
         self.apply_sweep_dependencies(confidence, indices, labels)
 
+    def save_segmentation(self, path: Path):
+        np.savez_compressed(path, labeled_voxelisation=self._labeled_voxelisation)
+
     def compute_segmentation(
         self, cross_section: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[PolyData]]:
