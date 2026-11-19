@@ -2,6 +2,7 @@ from pathlib import Path
 
 import edt
 import igl
+import mahotas as mh
 import numpy as np
 import trimesh
 from numba import njit, prange
@@ -9,7 +10,6 @@ from pyvista import PolyData
 from rich.progress import BarColumn, Progress, TextColumn
 from scipy.ndimage import binary_dilation, binary_erosion, binary_propagation
 from skimage.morphology import local_minima
-from skimage.segmentation import watershed
 
 from flowtier.common import UserError, console
 
@@ -411,7 +411,11 @@ class DomainData:
         markers = np.zeros(minima.shape, dtype=np.uint16)
         markers[minima] = inverse + 1
 
-        labeled_voxelisation = watershed(segmentation_field, markers=markers, mask=mask, connectivity=3)
+        labeled_voxelisation = mh.cwatershed(
+            segmentation_field, markers, Bc=mh.get_structuring_elem(segmentation_field, 3)
+        )
+
+        labeled_voxelisation[~mask] = 0
 
         return self.majority_smoothing(labeled_voxelisation, mask)
 

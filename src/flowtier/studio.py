@@ -821,7 +821,8 @@ def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
     console.print("[green]✔ AppState built[/green]")
 
     if mode == Mode.SILENT:
-        app_state.update_segmentation()
+        with console.status("Computing segmentation..."):
+            app_state.update_segmentation()
 
     else:
         app = QApplication.instance() or QApplication(sys.argv)
