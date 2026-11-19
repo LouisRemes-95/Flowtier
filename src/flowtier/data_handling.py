@@ -422,6 +422,11 @@ class DomainData:
 
         labeled_voxelisation[~mask] = 0
 
+        if labeled_voxelisation.max() > np.iinfo(np.uint16).max:
+            raise ValueError("Watershed labels exceed uint16 range.")
+
+        labeled_voxelisation = labeled_voxelisation.astype(np.uint16, copy=False)
+
         return self.majority_smoothing(labeled_voxelisation, mask)
 
     @staticmethod
