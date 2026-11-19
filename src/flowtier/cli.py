@@ -28,6 +28,7 @@ def build_parser() -> RichArgumentParser:
         description="Interface to segment filaments by sketching the filament center cross-section"
         "given the filament center lines",
         formatter_class=RichHelpFormatter,
+        allow_abbrev=False,
     )
 
     parser.add_argument(
@@ -36,17 +37,15 @@ def build_parser() -> RichArgumentParser:
         help="Path to the input triangulation in a .ply file, representing the solid-void interface",
     )
     parser.add_argument(
-        "-clp",
-        "--centerlines-path",
+        "centerlines_path",
         type=Path,
-        required=True,
         help="Path to the filament center lines in a .npz file",
     )
     parser.add_argument(
-        "-cs",
-        "--cross-section-path",
+        "-css",
+        "--cross-section-state-path",
         type=Path,
-        help="Path to a cross section in a .npz file",
+        help="Path to a cross section state in a .npz file",
     )
     parser.add_argument(
         "-o",
@@ -73,7 +72,7 @@ def build_parser() -> RichArgumentParser:
         "--precision",
         type=float,
         default=1,
-        help="Voxel grid precision in mm",
+        help=r"Voxel grid precision in \[mm]",
     )
     parser.add_argument(
         "-bd",
@@ -97,8 +96,8 @@ def resolve_input_path(path: Path, name: str) -> Path:
     return path
 
 
-def resolve_cross_section_path(path: Path | None, fallback_dir: Path) -> Path:
-    path = (path or fallback_dir / "cross_section").resolve()
+def resolve_cross_section_state_path(path: Path | None, fallback_dir: Path) -> Path:
+    path = (path or fallback_dir / "cross_section_state").resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
 
     return path.with_name(path.name.split(".")[0] + ".npz")
@@ -131,10 +130,12 @@ def main() -> int:
     try:
         surface_path = resolve_input_path(args.surface_path, "Surface")
         centerlines_path = resolve_input_path(args.centerlines_path, "Centerlines")
-        cross_section_path = resolve_cross_section_path(args.cross_section_path, args.centerlines_path.parent)
+        cross_section_state_path = resolve_cross_section_state_path(
+            args.cross_section_state_path, args.centerlines_path.parent
+        )
         output_path = resolve_output(surface_path, args.output_dir, args.name)
 
-        app_config = AppConfig(surface_path, centerlines_path, cross_section_path, output_path, args.mode)
+        app_config = AppConfig(surface_path, centerlines_path, cross_section_state_path, output_path, args.mode)
         alg_config = AlgConfig(args.precision, np.array(args.build_direction))
 
         return run_flowtier_studio(app_config, alg_config)

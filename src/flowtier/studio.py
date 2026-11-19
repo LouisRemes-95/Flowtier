@@ -152,8 +152,8 @@ class AppState(QObject):
         app_state = cls(domain_data)
         mode = app_config.mode
 
-        if app_config.mode != Mode.RESET and app_config.cross_section_path.is_file():
-            with np.load(app_config.cross_section_path) as data:
+        if mode != Mode.RESET and app_config.cross_section_state_path.is_file():
+            with np.load(app_config.cross_section_state_path) as data:
                 if len(data.files) != 1:
                     raise UserError("The .npz file must contain exactly one array.")
 
@@ -175,7 +175,7 @@ class Mode(StrEnum):
 class AppConfig:
     surface_path: Path
     center_lines_path: Path
-    cross_section_path: Path
+    cross_section_state_path: Path
     output_path: Path
     mode: Mode
     autosave_interval_ms: int = 500
@@ -201,7 +201,7 @@ class FlowtierStudio(QMainWindow):
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(self._app_config.autosave_interval_ms)
         self._save_timer.timeout.connect(
-            partial(self.app_state.save_cross_section, self._app_config.cross_section_path)
+            partial(self.app_state.save_cross_section, self._app_config.cross_section_state_path)
         )
 
         self.app_state.cross_section_changed.connect(self._save_timer.start)
@@ -279,7 +279,7 @@ class FlowtierStudio(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._save_timer.isActive():
             self._save_timer.stop()
-            self.app_state.save_cross_section(self._app_config.cross_section_path)
+            self.app_state.save_cross_section(self._app_config.cross_section_state_path)
 
         if self.app_state.is_computing:
             self._closing = True
@@ -804,14 +804,14 @@ def run_flowtier_studio(app_config: AppConfig, alg_config: AlgConfig) -> int:
     with console.status("Building AppState..."):
         app_state, mode = AppState.build(domain_data, app_config)
 
+    console.print("[green]✔ AppState built[/green]")
+
     if app_config.mode != mode:
         console.print(
             f"[bold yellow]⚠ Warning:[/bold yellow] "
-            f"Cross-section file not found: {app_config.cross_section_path}.\n"
+            f"Cross-section file not found: {app_config.cross_section_state_path}.\n"
             f"Starting in {mode} mode instead of {app_config.mode} mode"
         )
-
-    console.print("[green]✔ AppState built[/green]")
 
     if mode == Mode.SILENT:
         with console.status("Computing segmentation..."):
