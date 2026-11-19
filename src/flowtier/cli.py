@@ -36,10 +36,8 @@ def build_parser() -> RichArgumentParser:
         help="Path to the input triangulation in a .ply file, representing the solid-void interface",
     )
     parser.add_argument(
-        "-clp",
-        "--centerlines-path",
+        "centerlines_path",
         type=Path,
-        required=True,
         help="Path to the filament center lines in a .npz file",
     )
     parser.add_argument(
