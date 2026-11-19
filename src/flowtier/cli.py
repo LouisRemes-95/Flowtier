@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from typing import NoReturn, override
 
+import numpy as np
 from rich.panel import Panel
 from rich.traceback import install
 from rich_argparse import RichHelpFormatter
@@ -68,10 +69,20 @@ def build_parser() -> RichArgumentParser:
         help=("reset: start fresh in GUI; resume: load previous state in GUI; silent: apply state without opening GUI"),
     )
     parser.add_argument(
+        "-p",
         "--precision",
         type=float,
         default=1,
         help="Voxel grid precision in mm",
+    )
+    parser.add_argument(
+        "-bd",
+        "--build-direction",
+        type=float,
+        nargs=3,
+        default=1,
+        required=True,
+        help="Build direction when 3D printing",
     )
 
     return parser
@@ -124,7 +135,7 @@ def main() -> int:
         output_path = resolve_output(surface_path, args.output_dir, args.name)
 
         app_config = AppConfig(surface_path, centerlines_path, cross_section_path, output_path, args.mode)
-        alg_config = AlgConfig(args.precision)
+        alg_config = AlgConfig(args.precision, np.array(args.build_direction))
 
         return run_flowtier_studio(app_config, alg_config)
 

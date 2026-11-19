@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 
 import edt
@@ -14,17 +15,21 @@ from skimage.morphology import local_minima
 from flowtier.common import UserError, console
 
 
+@dataclass(frozen=True)
+class AlgConfig:
+    precision: float
+    build_direction: np.ndarray
+
+
 class DomainData:
-    def __init__(
-        self, surface_path: Path, center_lines_path: Path, precision: float, build_direction: np.ndarray
-    ) -> None:
+    def __init__(self, surface_path: Path, center_lines_path: Path, alg_config: AlgConfig) -> None:
         self.warnings: list[str] = []
 
-        if not np.isfinite(precision) or precision <= 0:
+        if not np.isfinite(alg_config.precision) or alg_config.precision <= 0:
             raise UserError("Precision must be finite and positive.")
-        self._precision = precision
+        self._precision = alg_config.precision
 
-        self._set_build_direction(build_direction)
+        self._set_build_direction(alg_config.build_direction)
         self._set_and_adjust_boundaries(surface_path)
         self._build_void_confidence_field(surface_path, subdivisions=2, chunk_size=1_000_000)
         self._build_initial_cross_section()
